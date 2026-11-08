@@ -1,0 +1,15 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+secrets/*
+!secrets/.gitkeep
+work/
+data/profiles/*
+!data/profiles/.gitkeep
+*.mp4
+*.mov

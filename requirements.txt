@@ -1,0 +1,9 @@
+aiogram>=3.13,<4
+aiohttp>=3.10
+arq>=0.26
+asyncpg>=0.29
+redis>=5.0
+httpx>=0.27
+pydantic>=2.8
+pydantic-settings>=2.4
+structlog>=24.4
