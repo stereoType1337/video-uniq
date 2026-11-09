@@ -45,3 +45,9 @@ class ProbeError(AppError):
         super().__init__(f"Cannot probe {path}: {reason}")
         self.path = path
         self.reason = reason
+
+
+class JobNotFoundError(AppError):
+    def __init__(self, job_id: int) -> None:
+        super().__init__(f"Job {job_id} not found")
+        self.job_id = job_id

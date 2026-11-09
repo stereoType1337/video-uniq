@@ -17,6 +17,15 @@ class Settings(BaseSettings):
     work_dir: str = "/srv/work"
     ffmpeg_bin: str = "ffmpeg"
     ffprobe_bin: str = "ffprobe"
+    fpcalc_bin: str = "fpcalc"
+
+    # Quality gate. Units: pHash mean Hamming bits (0..64), Chromaprint bit error rate (0..1).
+    # Defaults come from local measurements; calibrate on test accounts (ARCHITECTURE §6).
+    min_phash_to_original: float = 6.0
+    min_phash_to_copies: float = 5.0
+    min_audio_to_original: float = 0.10
+    max_render_attempts: int = 4
+    fingerprint_history: int = 500
 
     credit_ttl_days: int = 30
     referral_bonus: int = 30

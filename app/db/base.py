@@ -13,10 +13,10 @@ class BaseRepository:
         return await self._pool.fetchrow(query, *args)
 
     async def fetch(self, query: str, *args: Any) -> list[asyncpg.Record]:
-        return await self._pool.fetch(query, *args)
+        return list(await self._pool.fetch(query, *args))
 
     async def fetchval(self, query: str, *args: Any) -> Any:
         return await self._pool.fetchval(query, *args)
 
     async def execute(self, query: str, *args: Any) -> str:
-        return await self._pool.execute(query, *args)
+        return str(await self._pool.execute(query, *args))

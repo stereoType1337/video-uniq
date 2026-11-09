@@ -51,9 +51,13 @@ Caddy конфиг для сервера лежит в `caddy/video-uniq.conf`, 
 ```bash
 python -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt -e ".[dev]"
-ruff check . && pytest
+ruff check . && mypy app && pytest
 ```
+
+Для тестов рендера нужны `ffmpeg`, `ffprobe` и `fpcalc` (`brew install ffmpeg chromaprint`),
+без них такие тесты пропускаются. SQL-тесты запускаются, если задан `TEST_DATABASE_URL`
+(пустая одноразовая БД, схема пересоздаётся).
 
 ## Статус
 
-Скелет проекта. Дорожная карта в `docs/ARCHITECTURE.md`, раздел «План работ».
+Готово: пайплайн рендера, отпечатки и гейт качества, arq-задача (этап 1). Дорожная карта в `docs/ARCHITECTURE.md`, раздел «План работ».

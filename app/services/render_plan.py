@@ -37,6 +37,10 @@ _PRESETS = ("veryfast", "faster", "fast", "medium")
 _PROFILES = ("high", "main")
 _EQ_FREQS = (250, 500, 1000, 2000, 4000)
 _AUDIO_BITRATES_K = (96, 128, 160)
+# Measured: zoom below ~4 % or |pitch shift| below ~0.5 % leaves the copy too close to the
+# source (pHash < 5 bits, Chromaprint BER < 0.1), so the gate would reject it anyway.
+_MIN_ZOOM = 1.045
+_MIN_PITCH_SHIFT = 0.006
 _MIN_FPS = 24.0
 _MAX_FPS = 60.0
 
@@ -145,7 +149,7 @@ def generate_plan(seed: str, copy_index: int, source: SourceInfo, mode: Mode) ->
         geometry=_geometry(rng, source, limits),
         time=time_plan,
         color=_color(rng, limits),
-        audio=_audio(rng, source, limits),
+        audio=_audio(rng, source),
         codec=_codec(rng, time_plan.fps),
     )
 
@@ -162,7 +166,7 @@ def _geometry(rng: random.Random, source: SourceInfo, limits: ModeLimits) -> Geo
     pad_h = _even(rng.randint(8, 24)) if rng.random() < 0.4 else 0
     crop_w = _even(min(base_w * rng.uniform(1 - 0.04 * k, 0.99), base_w - pad_w))
     crop_h = _even(min(base_h * rng.uniform(1 - 0.04 * k, 0.99), base_h - pad_h))
-    zoom = rng.uniform(1.01, 1 + 0.08 * k)
+    zoom = rng.uniform(_MIN_ZOOM, 1 + 0.08 * k)
     scale_w = max(_even(base_w * zoom), crop_w)
     scale_h = max(_even(base_h * zoom), crop_h)
     sar_num, sar_den = _sar(rng)
@@ -219,13 +223,12 @@ def _color(rng: random.Random, limits: ModeLimits) -> ColorPlan:
     )
 
 
-def _audio(rng: random.Random, source: SourceInfo, limits: ModeLimits) -> AudioPlan | None:
+def _audio(rng: random.Random, source: SourceInfo) -> AudioPlan | None:
     if source.sample_rate is None:
         return None
-    k = limits.intensity
     return AudioPlan(
         sample_rate=source.sample_rate,
-        pitch=round(1 + rng.uniform(-0.02, 0.02) * min(k, 1.0), 4),
+        pitch=round(1 + rng.uniform(_MIN_PITCH_SHIFT, 0.02) * rng.choice((-1, 1)), 4),
         eq_freq=rng.choice(_EQ_FREQS),
         eq_gain=round(rng.uniform(-3, 3), 2),
         delay_ms=rng.randint(0, 30),
