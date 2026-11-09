@@ -40,6 +40,7 @@ services:
       POSTGRES_DB: uniq
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./app/db/migrations:/docker-entrypoint-initdb.d:ro
 
   redis:
     image: redis:7-alpine

@@ -38,3 +38,10 @@ class FingerprintCollisionError(AppError):
         super().__init__(f"Copy {copy_index} too close to an existing copy (distance {distance})")
         self.copy_index = copy_index
         self.distance = distance
+
+
+class ProbeError(AppError):
+    def __init__(self, path: str, reason: str) -> None:
+        super().__init__(f"Cannot probe {path}: {reason}")
+        self.path = path
+        self.reason = reason
