@@ -71,6 +71,8 @@ def _processor(
     job = Job(
         id=7,
         user_id=1,
+        chat_id=100,
+        status_message_id=None,
         source_sha256=file_sha256(source),
         source_key="src/in.mp4",
         mode=Mode.BASE,

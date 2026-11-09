@@ -9,11 +9,20 @@ class Settings(BaseSettings):
     webhook_port: int = 8080
     required_channel: str = ""
 
+    # Local telegram-bot-api server (lifts the 20 MB download / 50 MB upload limits).
+    # Empty url -> cloud Bot API. Files dir: where the server writes files (its own view)
+    # and where the same directory is mounted in our containers.
+    telegram_api_url: str = ""
+    telegram_files_server_dir: str = "/var/lib/telegram-bot-api"
+    telegram_files_local_dir: str = "/srv/work/tg"
+
     database_url: str = "postgresql://uniq:uniq@db:5432/uniq"
     redis_url: str = "redis://redis:6379/0"
     service_secret: str
 
     max_file_mb: int = 150
+    max_active_jobs: int = 2
+    files_ttl_hours: int = 24
     work_dir: str = "/srv/work"
     ffmpeg_bin: str = "ffmpeg"
     ffprobe_bin: str = "ffprobe"

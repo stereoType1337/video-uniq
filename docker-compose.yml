@@ -7,6 +7,7 @@ services:
     depends_on:
       - db
       - redis
+      - tg_api
     volumes:
       - ./work:/srv/work
     networks:
@@ -15,13 +16,13 @@ services:
 
   worker:
     build: .
-    container_name: video_uniq_worker
     restart: unless-stopped
     env_file: .env
     command: ["python", "-m", "app.workers.worker"]
     depends_on:
       - db
       - redis
+      - tg_api
     volumes:
       - ./work:/srv/work
     deploy:
@@ -29,6 +30,18 @@ services:
         limits:
           cpus: "2"
           memory: 2g
+
+  tg_api:
+    # Official Bot API server in local mode: 2 GB files, read straight from disk.
+    image: aiogram/telegram-bot-api:latest
+    container_name: video_uniq_tg_api
+    restart: unless-stopped
+    environment:
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH}
+      TELEGRAM_LOCAL: "1"
+    volumes:
+      - ./work/tg:/var/lib/telegram-bot-api
 
   db:
     image: postgres:16-alpine

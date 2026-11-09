@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS transactions (
 CREATE TABLE IF NOT EXISTS jobs (
     id               BIGSERIAL PRIMARY KEY,
     user_id          BIGINT      NOT NULL REFERENCES users(id),
+    chat_id          BIGINT      NOT NULL,
+    status_message_id BIGINT,
     source_sha256    TEXT        NOT NULL,
     source_key       TEXT        NOT NULL,
     mode             TEXT        NOT NULL,

@@ -51,3 +51,17 @@ class JobNotFoundError(AppError):
     def __init__(self, job_id: int) -> None:
         super().__init__(f"Job {job_id} not found")
         self.job_id = job_id
+
+
+class TooManyActiveJobsError(AppError):
+    def __init__(self, user_id: int, limit: int) -> None:
+        super().__init__(f"User {user_id} already has {limit} active jobs")
+        self.user_id = user_id
+        self.limit = limit
+
+
+class SourceDownloadError(AppError):
+    def __init__(self, file_id: str, reason: str) -> None:
+        super().__init__(f"Cannot download {file_id}: {reason}")
+        self.file_id = file_id
+        self.reason = reason

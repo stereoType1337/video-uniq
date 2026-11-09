@@ -4,14 +4,14 @@
 очереди FFmpeg-воркеров. Из одного исходника делает N копий, каждая из которых отличается для
 алгоритмов антидублей (pHash кадров, аудио-отпечаток, хеш файла), но визуально равна оригиналу.
 
-Стек: Python 3.12, aiogram 3 (webhook), arq + Redis, PostgreSQL 16 (asyncpg), FFmpeg, S3-совместимое
-хранилище, Docker Compose, централизованный Caddy. Стандарт кода: `SKILL.md` (обязателен).
+Стек: Python 3.12, aiogram 3 (webhook) + локальный telegram-bot-api, arq + Redis, PostgreSQL 16
+(asyncpg), FFmpeg, Docker Compose, централизованный Caddy. Стандарт кода: `SKILL.md` (обязателен).
 
 ## Архитектура
 
 ```
 Telegram bot ─┐
-Web cabinet  ─┼─> API/handlers ─> Redis (arq) ─> workers (FFmpeg) ─> S3 ─> delivery
+Web cabinet  ─┼─> API/handlers ─> Redis (arq) ─> workers (FFmpeg) ─> ./work ─> delivery
 REST API     ─┘        │                              │
                    PostgreSQL <───── fingerprints ─────┘
 ```
@@ -20,7 +20,9 @@ REST API     ─┘        │                              │
 - `app/services/uniqualizer.py` — генерация плана обработки из сида, сборка команды FFmpeg.
 - `app/services/profiles.py` — профили метаданных (редакторы, при явном включении — камеры).
 - `app/services/fingerprints.py` — pHash / Chromaprint / SHA-256, проверка на коллизии.
-- `app/services/billing.py` — кредиты, транзакции, сгорание через 30 дней, Stars-инвойсы.
+- `app/services/intake.py` — приём видео: лимиты, перенос исходника, задача, очередь.
+- `app/services/notifier.py` — статус задачи и выдача копий в чат.
+- `app/services/billing.py` — кредиты, транзакции, сгорание через 30 дней, Stars-инвойсы (этап 2).
 - `app/workers/uniqualize.py` — arq-задача: скачать, отрендерить, проверить, выдать.
 - `app/db/repositories` — весь доступ к БД, сырой SQL через asyncpg.
 
@@ -40,11 +42,16 @@ REST API     ─┘        │                              │
 ## Запуск
 
 ```bash
-cp .env.example .env            # заполнить BOT_TOKEN, WEBHOOK_HOST, DATABASE_URL, REDIS_URL
-docker compose up -d --build    # bot, worker x2, db, redis
+cp .env.example .env            # BOT_TOKEN, SERVICE_SECRET, TELEGRAM_API_ID, TELEGRAM_API_HASH
+mkdir -p work/tg
+# один раз: вывести бота из облачного Bot API, иначе локальный сервер не получит апдейты
+curl -s "https://api.telegram.org/bot$BOT_TOKEN/logOut"
+docker compose up -d --build --scale worker=2   # bot, worker x2, tg_api, db, redis
 ```
 
-Caddy конфиг для сервера лежит в `caddy/video-uniq.conf`, порты наружу не пробрасываются (SKILL §13).
+`api_id`/`api_hash` — my.telegram.org → API development tools (это ключи приложения, а не
+юзербота: локальный Bot API авторизуется токеном бота). Caddy конфиг лежит в
+`caddy/video-uniq.conf`, порты наружу не пробрасываются (SKILL §13).
 
 ## Разработка
 
@@ -60,4 +67,5 @@ ruff check . && mypy app && pytest
 
 ## Статус
 
-Готово: пайплайн рендера, отпечатки и гейт качества, arq-задача (этап 1). Дорожная карта в `docs/ARCHITECTURE.md`, раздел «План работ».
+Готово: пайплайн рендера, отпечатки и гейт качества, arq-задача (этап 1); приём видео до
+150 МБ, очередь с позицией, выдача копий, очистка файлов (начало этапа 2). Дорожная карта в `docs/ARCHITECTURE.md`, раздел «План работ».
