@@ -24,6 +24,7 @@ from app.services.intake import (
     IntakeService,
     TelegramFileFetcher,
 )
+from app.services.video_rules import VideoRules
 
 logger = structlog.get_logger()
 
@@ -45,6 +46,10 @@ async def _on_startup(bot: Bot, dispatcher: Dispatcher) -> None:
             work_dir=Path(settings.work_dir),
             max_file_mb=settings.max_file_mb,
             max_active_jobs=settings.max_active_jobs,
+            rules=VideoRules(
+                min_duration_s=settings.min_duration_s, max_duration_s=settings.max_duration_s
+            ),
+            ffprobe_bin=settings.ffprobe_bin,
         ),
     )
     await bot.set_webhook(settings.webhook_url, drop_pending_updates=True)

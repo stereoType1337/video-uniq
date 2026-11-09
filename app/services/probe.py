@@ -41,13 +41,26 @@ def parse_probe(data: dict[str, Any]) -> SourceInfo:
     duration = float(data.get("format", {}).get("duration") or video.get("duration") or 0)
     if duration <= 0:
         raise ValueError("unknown duration")
+    width, height = int(video["width"]), int(video["height"])
+    if _rotation(video) % 180 == 90:
+        # Phones store portrait video as a landscape frame + display rotation. FFmpeg applies
+        # the rotation while decoding, so everything downstream must see display dimensions.
+        width, height = height, width
     return SourceInfo(
-        width=int(video["width"]),
-        height=int(video["height"]),
+        width=width,
+        height=height,
         fps=_parse_rate(video.get("avg_frame_rate") or video.get("r_frame_rate", "0/1")),
         duration=duration,
         sample_rate=int(audio["sample_rate"]) if audio is not None else None,
+        container=str(data.get("format", {}).get("format_name", "")),
     )
+
+
+def _rotation(video: dict[str, Any]) -> int:
+    for side_data in video.get("side_data_list", []):
+        if "rotation" in side_data:
+            return abs(round(float(side_data["rotation"])))
+    return abs(int(video.get("tags", {}).get("rotate", 0)))  # older muxers
 
 
 def _parse_rate(raw: str) -> float:

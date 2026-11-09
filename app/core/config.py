@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     service_secret: str
 
     max_file_mb: int = 150
+    min_duration_s: float = 0.5
+    max_duration_s: float = 180.0
     max_active_jobs: int = 2
     files_ttl_hours: int = 24
     work_dir: str = "/srv/work"
@@ -39,7 +41,8 @@ class Settings(BaseSettings):
     credit_ttl_days: int = 30
     referral_bonus: int = 30
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    # .env is shared with the tg_api container (TELEGRAM_API_ID/HASH are its, not ours)
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     @property
     def webhook_path(self) -> str:

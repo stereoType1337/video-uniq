@@ -52,6 +52,7 @@ class SourceInfo:
     fps: float
     duration: float
     sample_rate: int | None  # None when the source has no audio stream
+    container: str = ""  # ffprobe format_name, e.g. "mov,mp4,m4a,3gp,3g2,mj2"
 
     @property
     def has_audio(self) -> bool:

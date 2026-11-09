@@ -7,7 +7,7 @@ import secrets
 import shutil
 import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
@@ -17,10 +17,24 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
 from arq.connections import ArqRedis
 
-from app.core.exceptions import FileTooLargeError, SourceDownloadError, TooManyActiveJobsError
+from app.core.exceptions import (
+    FileTooLargeError,
+    ProbeError,
+    SourceDownloadError,
+    TooManyActiveJobsError,
+)
 from app.db.repositories.jobs import Job, NewJob
 from app.services.fingerprints import file_sha256
-from app.services.render_plan import Mode
+from app.services.probe import probe_source
+from app.services.render_plan import Mode, SourceInfo
+from app.services.video_rules import (
+    Rejection,
+    RejectReason,
+    VideoRejectedError,
+    VideoRules,
+    check_source,
+    is_duration_allowed,
+)
 
 logger = structlog.get_logger()
 
@@ -55,6 +69,7 @@ class IntakeRequest:
     status_message_id: int | None
     file_id: str
     file_size: int | None
+    duration: int | None  # Telegram's rounded duration; documents usually have none
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +77,8 @@ class IntakeConfig:
     work_dir: Path
     max_file_mb: int
     max_active_jobs: int
+    rules: VideoRules = field(default_factory=VideoRules)
+    ffprobe_bin: str = "ffprobe"
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,7 +100,7 @@ class IntakeService:
     async def accept(self, request: IntakeRequest, on_queued: OnQueued) -> Job:
         """``on_queued`` runs before the job hits the queue, so a fast worker cannot be
         overtaken by the "you are in the queue" message."""
-        self._check_size(request.file_size)
+        self._check_metadata(request)
         user = await self._deps.users.upsert(request.tg_id, request.username, _ref_code())
         if await self._deps.jobs.count_active(user["id"]) >= self._config.max_active_jobs:
             raise TooManyActiveJobsError(user["id"], self._config.max_active_jobs)
@@ -92,7 +109,11 @@ class IntakeService:
         source_path = self._config.work_dir / source_key
         source_path.parent.mkdir(parents=True, exist_ok=True)
         await self._deps.fetcher.fetch(request.file_id, source_path)
-        self._check_size(source_path.stat().st_size)
+        try:
+            await self._check_file(source_path)
+        except (FileTooLargeError, ProbeError, VideoRejectedError):
+            source_path.unlink(missing_ok=True)
+            raise
 
         job = await self._deps.jobs.create(
             NewJob(
@@ -109,6 +130,22 @@ class IntakeService:
         await self._deps.queue.enqueue(job.id)
         logger.info("job_queued", job_id=job.id, user_id=user["id"], copies=job.copies)
         return job
+
+    def _check_metadata(self, request: IntakeRequest) -> None:
+        """Cheap checks on what Telegram tells us, before downloading anything."""
+        self._check_size(request.file_size)
+        rules = self._config.rules
+        if request.duration is not None and not is_duration_allowed(request.duration, rules):
+            early = SourceInfo(0, 0, 0.0, float(request.duration), None)
+            raise VideoRejectedError(Rejection(RejectReason.TOO_LONG, early, rules))
+
+    async def _check_file(self, path: Path) -> SourceInfo:
+        self._check_size(path.stat().st_size)
+        source = await probe_source(path, self._config.ffprobe_bin)
+        rejection = check_source(source, self._config.rules)
+        if rejection is not None:
+            raise VideoRejectedError(rejection)
+        return source
 
     def _check_size(self, size: int | None) -> None:
         if size is not None and size > self._config.max_file_mb * _BYTES_IN_MB:

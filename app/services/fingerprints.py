@@ -21,7 +21,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+import structlog
+
 from app.core.exceptions import ProbeError
+
+logger = structlog.get_logger()
 
 PHASH_SAMPLES = 32
 _FRAME_SIDE = 32
@@ -114,7 +118,15 @@ async def _video_phash(path: Path, duration: float, ffmpeg_bin: str) -> tuple[in
 
 
 async def _chromaprint(path: Path, fpcalc_bin: str) -> tuple[int, ...] | None:
-    raw = await _run(fpcalc_bin, "-raw", "-json", "-length", str(_CHROMA_LENGTH_S), str(path))
+    """None when there is too little audio for a fingerprint (fpcalc: "Empty fingerprint",
+    typical for clips under ~3 s); the gate then skips the audio check."""
+    try:
+        raw = await _run(fpcalc_bin, "-raw", "-json", "-length", str(_CHROMA_LENGTH_S), str(path))
+    except ProbeError as exc:
+        if "Empty fingerprint" not in exc.reason:
+            raise
+        logger.info("chromaprint_skipped", reason="audio_too_short")
+        return None
     values: list[int] = json.loads(raw).get("fingerprint") or []
     return tuple(v & 0xFFFFFFFF for v in values) or None
 

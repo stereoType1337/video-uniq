@@ -5,9 +5,15 @@ from aiogram.types import Message
 
 from app.core import texts
 from app.core.config import settings
-from app.core.exceptions import FileTooLargeError, SourceDownloadError, TooManyActiveJobsError
+from app.core.exceptions import (
+    FileTooLargeError,
+    ProbeError,
+    SourceDownloadError,
+    TooManyActiveJobsError,
+)
 from app.db.repositories.jobs import Job
 from app.services.intake import IntakeRequest, IntakeService
+from app.services.video_rules import VideoRejectedError
 
 router = Router(name="upload")
 
@@ -32,6 +38,7 @@ async def handle_video(message: Message, intake: IntakeService) -> None:
         status_message_id=status.message_id,
         file_id=media.file_id,
         file_size=media.file_size,
+        duration=message.video.duration if message.video is not None else None,
     )
     try:
         await intake.accept(request, on_queued)
@@ -39,6 +46,10 @@ async def handle_video(message: Message, intake: IntakeService) -> None:
         await status.edit_text(texts.TOO_LARGE.format(size=exc.size_mb, limit=exc.limit_mb))
     except TooManyActiveJobsError as exc:
         await status.edit_text(texts.TOO_MANY_JOBS.format(limit=exc.limit))
+    except VideoRejectedError as exc:
+        await status.edit_text(texts.rejected(exc.rejection))
+    except ProbeError:
+        await status.edit_text(texts.UNREADABLE)
     except SourceDownloadError:
         await status.edit_text(texts.DOWNLOAD_FAILED)
 

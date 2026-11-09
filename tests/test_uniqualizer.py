@@ -54,11 +54,22 @@ def test_parse_probe_reads_streams() -> None:
                 },
                 {"codec_type": "audio", "sample_rate": "44100"},
             ],
-            "format": {"duration": "12.5"},
+            "format": {"duration": "12.5", "format_name": "mov,mp4"},
         }
     )
     assert (info.width, info.height, info.sample_rate) == (1080, 1920, 44100)
+    assert info.container == "mov,mp4"
     assert info.fps == pytest.approx(29.97, abs=0.01)
+
+
+@pytest.mark.parametrize(
+    "rotation_fields",
+    [{"side_data_list": [{"rotation": -90}]}, {"tags": {"rotate": "270"}}],
+)
+def test_parse_probe_swaps_dimensions_for_rotated_video(rotation_fields: dict[str, object]) -> None:
+    video = {"codec_type": "video", "width": 1920, "height": 1080, "avg_frame_rate": "30/1"}
+    info = parse_probe({"streams": [video | rotation_fields], "format": {"duration": "5"}})
+    assert (info.width, info.height) == (1080, 1920)
 
 
 def test_parse_probe_rejects_audio_only() -> None:
@@ -113,3 +124,21 @@ async def test_render_produces_planned_output(
         assert out.sample_rate == 48000
         expected = (source.duration - plan.time.start_offset) / plan.time.speed
         assert out.duration == pytest.approx(expected, abs=0.25)
+
+
+@pytest.mark.skipif(not _HAS_FFMPEG, reason="ffmpeg is not installed")
+async def test_rotated_phone_video_stays_portrait(sample_video: Path, tmp_path: Path) -> None:
+    rotated = tmp_path / "rotated.mp4"
+    subprocess.run(
+        ["ffmpeg", "-loglevel", "error", "-y", "-display_rotation", "90",
+         "-i", str(sample_video), "-c", "copy", str(rotated)],
+        check=True,
+    )  # fmt: skip
+    source = await probe_source(rotated)
+    assert source.height > source.width
+    plan = _plan(0, source)
+    dst = tmp_path / "out.mp4"
+    await render_copy(plan, rotated, dst)
+    out = await probe_source(dst)
+    assert (out.width, out.height) == (plan.geometry.out_w, plan.geometry.out_h)
+    assert out.height > out.width

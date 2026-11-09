@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import random
+import shutil
+import subprocess
+from pathlib import Path
 
 import pytest
 
 from app.services.fingerprints import (
     Fingerprint,
     QualityThresholds,
+    Tools,
     chromaprint_distance,
+    compute_fingerprint,
     decode_chromaprint,
     decode_phash,
     encode_chromaprint,
@@ -93,3 +98,16 @@ def test_gate_rejects(candidate: Fingerprint, previous: list[Fingerprint], reaso
     verdict = evaluate_copy(candidate, original, previous, _THRESHOLDS)
     assert not verdict.accepted
     assert verdict.reason == reason
+
+
+@pytest.mark.skipif(shutil.which("fpcalc") is None, reason="fpcalc is not installed")
+async def test_short_audio_skips_chromaprint(tmp_path: Path) -> None:
+    clip = tmp_path / "short.mp4"
+    subprocess.run(
+        ["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=d=1",
+         "-f", "lavfi", "-i", "sine=d=1", "-shortest", str(clip)],
+        check=True,
+    )  # fmt: skip
+    fingerprint = await compute_fingerprint(clip, 1.0, has_audio=True, tools=Tools())
+    assert fingerprint.chromaprint is None
+    assert len(fingerprint.phash) > 0
