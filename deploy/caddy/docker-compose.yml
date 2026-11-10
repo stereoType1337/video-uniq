@@ -1,0 +1,23 @@
+# Centralized Caddy shared by all projects on the server (SKILL.md §13).
+# Lives in /opt/caddy, not in any project. Projects join the external webapps_network.
+services:
+  caddy:
+    image: caddy:2.11.9-alpine
+    container_name: caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./conf.d:/etc/caddy/conf.d:ro
+      - ./data:/data
+      - ./config:/config
+      - ./logs:/var/log/caddy
+    networks:
+      - webapps_network
+
+networks:
+  webapps_network:
+    external: true

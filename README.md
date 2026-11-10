@@ -51,6 +51,15 @@ curl -s "https://api.telegram.org/bot$BOT_TOKEN/logOut"
 docker compose up -d --build --scale worker=2   # bot, worker x2, tg_api, db, redis
 ```
 
+Общий Caddy (один на сервер, SKILL §13) лежит в `deploy/caddy/` и ставится в `/opt/caddy`:
+
+```bash
+docker network create webapps_network            # один раз на сервер
+mkdir -p /opt/caddy/conf.d/video-uniq && cp deploy/caddy/* /opt/caddy/
+cp caddy/video-uniq.conf /opt/caddy/conf.d/video-uniq/
+cd /opt/caddy && docker compose up -d             # дальше: docker exec caddy caddy reload --config /etc/caddy/Caddyfile
+```
+
 `api_id`/`api_hash` — my.telegram.org → API development tools (это ключи приложения, а не
 юзербота: локальный Bot API авторизуется токеном бота). Caddy конфиг лежит в
 `caddy/video-uniq.conf`, порты наружу не пробрасываются (SKILL §13).
