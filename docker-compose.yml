@@ -33,7 +33,7 @@ services:
 
   tg_api:
     # Official Bot API server in local mode: 2 GB files, read straight from disk.
-    image: aiogram/telegram-bot-api:latest
+    image: aiogram/telegram-bot-api:10.4  # pinned; verified env vars TELEGRAM_API_ID/HASH/LOCAL
     container_name: video_uniq_tg_api
     restart: unless-stopped
     environment:
