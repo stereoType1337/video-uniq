@@ -26,6 +26,7 @@ from aiogram.types import (
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from app.core import texts
 from app.core.config import settings
 from app.core.exceptions import InsufficientBalanceError
 from app.db.repositories.admin import AdminRepository, PeriodCounts, Summary, UserCard
@@ -102,7 +103,8 @@ def render_card(card: UserCard) -> Screen:
             f" · пригласил: {card.invited}",
             "",
             f"💰 Баланс: {u.balance} кр.",
-            f"⚙️ Настройки: {u.mode.value}, {u.copies} копий",
+            f"⚙️ Настройки: {u.mode.value}, {texts.copies_word(u.copies)}"
+            f", звук {u.audio_mode.value}",
             f"🎬 Задач: {card.jobs_total} · выдано копий: {card.copies_delivered}",
             f"⭐ Оплачено: {card.stars_paid} Stars"
             + (
