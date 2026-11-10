@@ -26,10 +26,11 @@ services:
     volumes:
       - ./work:/srv/work
     deploy:
+      replicas: 2  # sized for 8 vCPU / 16 GB: 2 x 3.5 CPU, ~1 CPU left for bot/db/tg_api
       resources:
         limits:
-          cpus: "2"
-          memory: 2g
+          cpus: "3.5"
+          memory: 4g
 
   tg_api:
     # Official Bot API server in local mode: 2 GB files, read straight from disk.
@@ -53,7 +54,6 @@ services:
       POSTGRES_DB: uniq
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./app/db/migrations:/docker-entrypoint-initdb.d:ro
 
   redis:
     image: redis:7-alpine

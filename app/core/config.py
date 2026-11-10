@@ -9,6 +9,11 @@ class Settings(BaseSettings):
     webhook_port: int = 8080
     required_channel: str = ""
     support_contact: str = ""  # @username or link shown by /support
+    admin_ids: str = ""  # comma-separated Telegram ids with access to /admin
+
+    @property
+    def admin_id_set(self) -> frozenset[int]:
+        return frozenset(int(x) for x in self.admin_ids.replace(" ", "").split(",") if x)
 
     # Local telegram-bot-api server (lifts the 20 MB download / 50 MB upload limits).
     # Empty url -> cloud Bot API. Files dir: where the server writes files (its own view)
@@ -37,6 +42,9 @@ class Settings(BaseSettings):
     min_phash_to_copies: float = 5.0
     min_audio_to_original: float = 0.10
     max_render_attempts: int = 4
+    # One job per worker process: FFmpeg already uses all CPUs it is given (arq default is 10).
+    worker_max_jobs: int = 1
+    job_timeout_s: int = 3600  # 10 HD copies of a 3-minute clip must fit
     fingerprint_history: int = 500
 
     credit_ttl_days: int = 30

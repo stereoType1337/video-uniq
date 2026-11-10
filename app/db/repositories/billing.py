@@ -96,6 +96,7 @@ class BillingRepository(BaseRepository):
                 """
                 UPDATE jobs
                 SET settled_at = now(),
+                    copies_delivered = LEAST($2, copies),
                     credits_charged = credits_reserved * LEAST($2, copies) / copies
                 WHERE id = $1 AND settled_at IS NULL
                 RETURNING user_id, credits_reserved, credits_charged
@@ -224,6 +225,11 @@ class BillingRepository(BaseRepository):
             await apply_entry(conn, LedgerEntry(referred_id, bonus, EntryKind.REFERRAL))
             await apply_entry(conn, LedgerEntry(row["referrer_id"], bonus, EntryKind.REFERRAL))
             return ReferralReward(row["referrer_id"], row["referrer_tg_id"], row["referred_tg_id"])
+
+    async def admin_adjust(self, user_id: int, amount: int) -> int:
+        """Manual credit grant (positive) or removal (negative) from the admin panel."""
+        async with self._pool.acquire() as conn, conn.transaction():
+            return await apply_entry(conn, LedgerEntry(user_id, amount, EntryKind.ADMIN))
 
     async def expire_credits(self, ttl_days: int) -> int:
         """Burn balances of users whose last purchase is older than ``ttl_days``.

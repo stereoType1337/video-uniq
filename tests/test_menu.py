@@ -25,8 +25,12 @@ from aiogram.types import (
 )
 
 from app.core import texts
+from app.core.config import settings
+from app.db.repositories.admin import AdminRepository
 from app.db.repositories.billing import BillingRepository
 from app.db.repositories.users import User, UserRepository
+from app.handlers.admin import AdminAction
+from app.handlers.admin import router as admin_router
 from app.handlers.billing import router as billing_router
 from app.handlers.menu import router as menu_router
 from app.handlers.screens import (
@@ -214,3 +218,51 @@ async def test_balance_screen_opens_packs_in_place(harness: Harness) -> None:
     calls = await harness.press("open:packs")
     edit = next(c for c in calls if isinstance(c, EditMessageText))
     assert edit.text == texts.BUY_TITLE
+
+
+# --- admin -----------------------------------------------------------------------------
+
+
+@pytest.fixture
+def admin_harness(pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch) -> Harness:
+    monkeypatch.setattr(settings, "admin_ids", "42")
+    harness = Harness(pool)
+    admin_router._parent_router = None
+    harness.dp.include_router(admin_router)
+    harness.dp["admin"] = AdminRepository(pool)
+    harness.dp["billing"] = BillingRepository(pool)
+    return harness
+
+
+async def test_admin_is_hidden_from_non_admins(
+    harness: Harness, pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "admin_ids", "1")
+    admin_router._parent_router = None
+    harness.dp.include_router(admin_router)
+    harness.dp["admin"] = AdminRepository(pool)
+    assert await harness.text("/admin") == []
+
+
+async def test_admin_summary_search_and_grant(admin_harness: Harness, pool: asyncpg.Pool) -> None:
+    await admin_harness.text("/start")
+    (summary,) = await admin_harness.text("/admin")
+    assert isinstance(summary, SendMessage) and "Новые юзеры: сегодня 1" in summary.text
+
+    await admin_harness.press(AdminAction(action="search").pack())
+    (card,) = await admin_harness.text("@t")
+    assert isinstance(card, SendMessage) and "tg_id 42" in card.text and "Баланс: 5" in card.text
+
+    user_id = await pool.fetchval("SELECT id FROM users WHERE tg_id = 42")
+    calls = await admin_harness.press(
+        AdminAction(action="grant", user_id=user_id, amount=50).pack()
+    )
+    edit = next(c for c in calls if isinstance(c, EditMessageText))
+    assert "Баланс: 55 кр." in edit.text
+    forged = await admin_harness.press(
+        AdminAction(action="grant", user_id=user_id, amount=100000).pack()
+    )
+    assert any(isinstance(c, AnswerCallbackQuery) and c.show_alert for c in forged)
+    assert await pool.fetchval("SELECT balance FROM users WHERE tg_id = 42") == 55
+    kinds = [r["kind"] for r in await pool.fetch("SELECT kind FROM transactions ORDER BY id")]
+    assert kinds == ["trial", "admin"]

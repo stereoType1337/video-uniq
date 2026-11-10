@@ -4,6 +4,8 @@ from pathlib import Path
 
 import structlog
 from aiogram import Bot, Dispatcher
+from aiogram.fsm.storage.base import DefaultKeyBuilder
+from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.types import BotCommand
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
@@ -13,10 +15,13 @@ from arq.connections import ArqRedis, RedisSettings
 from app.core.bot import build_bot
 from app.core.config import settings
 from app.core.logging import setup_logging
+from app.db.migrate import run_migrations
 from app.db.pool import close_pool, init_pool
+from app.db.repositories.admin import AdminRepository
 from app.db.repositories.billing import BillingRepository
 from app.db.repositories.jobs import JobRepository
 from app.db.repositories.users import UserRepository
+from app.handlers.admin import router as admin_router
 from app.handlers.billing import router as billing_router
 from app.handlers.menu import router as menu_router
 from app.handlers.start import router as start_router
@@ -48,8 +53,11 @@ BOT_COMMANDS = [
 
 async def _on_startup(bot: Bot, dispatcher: Dispatcher) -> None:
     pool = await init_pool()
+    await run_migrations(pool)
     redis = await create_pool(RedisSettings.from_dsn(settings.redis_url))
     users, billing = UserRepository(pool), BillingRepository(pool)
+    dispatcher["admin"] = AdminRepository(pool)
+    dispatcher["billing"] = billing
     accounts = AccountService(users, billing, settings.free_credits)
     dispatcher[_REDIS_KEY] = redis
     dispatcher["users"] = users
@@ -95,7 +103,9 @@ async def _on_shutdown(bot: Bot, dispatcher: Dispatcher) -> None:
 
 def build_app() -> web.Application:
     bot = build_bot()
-    dp = Dispatcher()
+    fsm = RedisStorage.from_url(settings.redis_url, key_builder=DefaultKeyBuilder(prefix="fsm"))
+    dp = Dispatcher(storage=fsm)
+    dp.include_router(admin_router)  # first: its FSM text input must win over menu buttons
     dp.include_router(start_router)
     dp.include_router(menu_router)
     dp.include_router(billing_router)

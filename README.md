@@ -48,7 +48,7 @@ cp .env.example .env            # BOT_TOKEN, SERVICE_SECRET, TELEGRAM_API_ID, TE
 mkdir -p work/tg
 # один раз: вывести бота из облачного Bot API, иначе локальный сервер не получит апдейты
 curl -s "https://api.telegram.org/bot$BOT_TOKEN/logOut"
-docker compose up -d --build --scale worker=2   # bot, worker x2, tg_api, db, redis
+docker compose up -d --build   # bot, worker x2 (replicas в compose), tg_api, db, redis
 ```
 
 Общий Caddy (один на сервер, SKILL §13) лежит в `deploy/caddy/` и ставится в `/opt/caddy`:

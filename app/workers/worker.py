@@ -10,6 +10,7 @@ from arq.connections import RedisSettings
 from app.core.bot import build_bot
 from app.core.config import settings
 from app.core.logging import setup_logging
+from app.db.migrate import run_migrations
 from app.db.pool import close_pool, get_pool, init_pool
 from app.db.repositories.billing import BillingRepository
 from app.db.repositories.jobs import JobRepository
@@ -31,7 +32,7 @@ _BOT_KEY = "bot"
 
 
 async def _on_startup(ctx: dict[str, Any]) -> None:
-    await init_pool()
+    await run_migrations(await init_pool())
     bot = build_bot()
     ctx[_BOT_KEY] = bot
     ctx[JOBS_KEY] = JobRepository(get_pool())
@@ -59,7 +60,8 @@ class WorkerSettings:
     on_shutdown = _on_shutdown
     queue_name = QUEUE_NAME
     max_tries = 3
-    job_timeout = 900
+    max_jobs = settings.worker_max_jobs
+    job_timeout = settings.job_timeout_s
     redis_settings = RedisSettings.from_dsn(settings.redis_url)
 
 

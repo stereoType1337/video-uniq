@@ -55,7 +55,9 @@ exiftool поверх выхода FFmpeg.
 
 ## 4. Инфраструктура
 
-- **Очередь**: arq, `queue_name=uniqualize`, `max_tries=3`, `job_timeout=900`.
+- **Очередь**: arq, `queue_name=uniqualize`, `max_tries=3`, `job_timeout=3600`, `max_jobs=1` на
+  воркер (FFmpeg сам занимает выданные ядра; дефолт arq — 10 задач параллельно).
+- **Миграции**: `app/db/migrate.py` на старте бота и воркера, `schema_migrations` + advisory lock.
 - **Воркеры**: FFmpeg, лимит 2 CPU / 2 GB на реплику, горизонтальное масштабирование по
   длине очереди. 16-ядерный дедик ≈ 15–20 копий минутного 1080p в минуту ≈ 20k копий/сутки.
   GPU-нода с NVENC для пиков (×5–8).

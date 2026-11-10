@@ -4,6 +4,27 @@ from __future__ import annotations
 
 from app.services.video_rules import Rejection, RejectReason
 
+
+def plural(n: int, one: str, few: str, many: str) -> str:
+    """Russian plural form: 1 копия, 2 копии, 5 копий, 11 копий, 21 копия."""
+    if n % 10 == 1 and n % 100 != 11:
+        return one
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return few
+    return many
+
+
+_UNIQUE_COPY_FORMS = ("уникальная копия", "уникальные копии", "уникальных копий")
+
+
+def copies_word(n: int) -> str:
+    return f"{n} {plural(n, 'копия', 'копии', 'копий')}"
+
+
+def credits_word(n: int) -> str:
+    return f"{n} {plural(n, 'кредит', 'кредита', 'кредитов')}"
+
+
 DOWNLOADING = "⏳ Загружаю видео…"
 NOT_A_VIDEO = "Это не видео. Пришлите ролик файлом (📎 → Файл), до {limit} МБ."
 TOO_LARGE = "Файл {size:.0f} МБ, а лимит {limit} МБ. Сожмите или обрежьте ролик и пришлите снова."
@@ -19,27 +40,29 @@ COMPRESSED_HINT = (
 
 def queued(position: int, copies: int) -> str:
     if position == 0:
-        return f"✅ Видео принято. Делаю {copies} копий, начну через несколько секунд."
+        return f"✅ Видео принято. Делаю {copies_word(copies)}, начну через несколько секунд."
     return (
         f"✅ Видео принято, сейчас очередь.\n"
-        f"Перед вами задач: {position}. Ожидайте — пришлю {copies} копий, как только будут готовы."
+        f"Перед вами задач: {position}. Ожидайте — пришлю {copies_word(copies)}, "
+        "как только будут готовы."
     )
 
 
 def processing(copies: int) -> str:
-    return f"⚙️ Обрабатываю видео: {copies} копий…"
+    return f"⚙️ Обрабатываю видео: {copies_word(copies)}…"
 
 
 def done(count: int, charged: int, balance: int | None) -> str:
     text = (
-        f"🎉 Готово: {count} уникальных копий, каждая — отдельный файл ниже.\nСписано {charged} кр."
+        f"🎉 Готово: {count} {plural(count, *_UNIQUE_COPY_FORMS)}, "
+        f"каждая — отдельный файл ниже.\nСписано {charged} кр."
     )
     return text + (f", на балансе {balance} кр." if balance is not None else ".")
 
 
 def partial(ok: int, failed: int, refunded: int) -> str:
     return (
-        f"Выдано {ok} копий, ещё {failed} не прошли проверку уникальности. "
+        f"Выдано {copies_word(ok)}, ещё {failed} не прошли проверку уникальности. "
         f"За них {refunded} кр. вернулись на баланс."
     )
 
@@ -65,7 +88,7 @@ def welcome(trial_credits: int) -> str:
         "Режим и число копий — в ⚙️ Настройках, баланс и пополнение — в 💰 Балансе."
     )
     if trial_credits:
-        text += f"\n\n🎁 Вам начислено {trial_credits} кредитов, чтобы попробовать бесплатно."
+        text += f"\n\n🎁 Вам начислено {credits_word(trial_credits)}, чтобы попробовать бесплатно."
     return text
 
 
@@ -77,11 +100,11 @@ def pack_button(credits: int, stars: int) -> str:
 
 
 def invoice_title(credits: int) -> str:
-    return f"{credits} кредитов"
+    return credits_word(credits)
 
 
 def invoice_description(credits: int) -> str:
-    return f"{credits} кредитов на уникализацию видео. Действуют 30 дней с последней покупки."
+    return f"{credits_word(credits)} на уникализацию видео. Действуют 30 дней с последней покупки."
 
 
 def purchase_done(credits: int, balance: int) -> str:
@@ -156,7 +179,7 @@ MODE_DESCRIPTIONS = {
 def menu_hint(mode: str, copies: int, cost: int) -> str:
     return (
         f"Пришлите видео файлом (📎 → Файл).\n"
-        f"Сейчас: {MODE_TITLES[mode]}, {copies} копий — {cost} кр. за запуск. "
+        f"Сейчас: {MODE_TITLES[mode]}, {copies_word(copies)} — {cost} кр. за запуск. "
         "Поменять — в ⚙️ Настройках."
     )
 
@@ -202,7 +225,7 @@ def support(contact: str) -> str:
 def balance_screen(credits: int, mode: str, copies: int, cost: int, ttl_days: int) -> str:
     return (
         f"💰 Баланс: {credits} кр.\n"
-        f"Текущий запуск ({MODE_TITLES[mode]}, {copies} копий) стоит {cost} кр.\n\n"
+        f"Текущий запуск ({MODE_TITLES[mode]}, {copies_word(copies)}) стоит {cost} кр.\n\n"
         "Цена копии: Base 1 кр., HD 2 кр., HD+ 3 кр.\n"
         f"Купленные кредиты действуют {ttl_days} дней с последней покупки."
     )
