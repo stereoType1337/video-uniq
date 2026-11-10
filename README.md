@@ -66,12 +66,20 @@ cd /opt/caddy && docker compose up -d             # дальше: docker exec ca
 
 ## Автодеплой
 
-`.github/workflows/deploy.yml`: на каждый push в `main` — ruff, mypy, pytest (Postgres,
-FFmpeg, fpcalc), затем SSH на сервер и `deploy/deploy.sh`: бэкап БД в `/opt/backups`
-(14 последних), `git reset --hard origin/main`, `docker compose up -d --build`, проверка
-`/health`. Ключ GitHub на сервере ограничен этим скриптом (`command=…,restrict` в
-`authorized_keys`). Секреты репозитория: `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS`, `DEPLOY_HOST`.
-Вручную на сервере: `/opt/video-uniq/deploy/deploy.sh`.
+Pull-схема, без ключей и секретов в GitHub:
+
+1. `.github/workflows/test.yml` на каждый push: ruff, mypy, pytest (Postgres, FFmpeg, fpcalc).
+2. На сервере таймер `video-uniq-autodeploy.timer` раз в минуту запускает
+   `deploy/autodeploy.sh`: есть новый коммит в `main` и job `test` для него зелёный —
+   `deploy/deploy.sh <sha>` (бэкап БД в `/opt/backups`, 14 последних; reset; `compose up --build`;
+   проверка `/health`). Упавшие тесты — коммит не выкатывается.
+
+Установка таймера (один раз):
+```bash
+cp deploy/systemd/video-uniq-autodeploy.* /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now video-uniq-autodeploy.timer
+journalctl -u video-uniq-autodeploy -f    # логи выкаток
+```
 
 ## Разработка
 

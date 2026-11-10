@@ -1,4 +1,6 @@
-name: test-and-deploy
+# CI only. Deployment is pull-based: the server deploys a commit once this job is green
+# (deploy/autodeploy.sh + systemd timer), so GitHub holds no keys to the server.
+name: test
 
 on:
   push:
@@ -7,8 +9,8 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: deploy-main
-  cancel-in-progress: false
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -43,24 +45,3 @@ jobs:
       - name: Tests
         run: pytest -q
 
-  deploy:
-    needs: test
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
-    environment: production
-    steps:
-      - name: Deploy over SSH
-        env:
-          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
-          HOST: ${{ secrets.DEPLOY_HOST }}
-        run: |
-          if [ -z "$SSH_KEY" ] || [ -z "$KNOWN_HOSTS" ] || [ -z "$HOST" ]; then
-            echo "::warning::DEPLOY_SSH_KEY / DEPLOY_KNOWN_HOSTS / DEPLOY_HOST are not set, skipping deploy"
-            exit 0
-          fi
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
-          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
-          # The key is pinned to deploy/deploy.sh on the server; no command is passed.
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes -o BatchMode=yes "root@$HOST"

@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Server-side deploy. Runs as the forced command of the GitHub Actions SSH key
-# (authorized_keys: command="/opt/video-uniq/deploy/deploy.sh",restrict ...), so that key can do
-# nothing else. Can also be run by hand on the server.
+# Server-side deploy: backup, update to a commit (default origin/main), rebuild, health check.
+# Called by autodeploy.sh after green CI; can also be run by hand: deploy/deploy.sh [sha].
 set -euo pipefail
 
 APP_DIR=/opt/video-uniq
@@ -20,8 +19,9 @@ ls -1t "$BACKUP_DIR"/uniq-*.dump | tail -n +$((KEEP_BACKUPS + 1)) | xargs -r rm 
 
 echo "== update code"
 git fetch --quiet origin main
+target=${1:-origin/main}
 before=$(git rev-parse --short HEAD)
-git reset --hard --quiet origin/main
+git reset --hard --quiet "$target"
 echo "$before -> $(git rev-parse --short HEAD)"
 
 echo "== build and restart"

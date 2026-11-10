@@ -1,0 +1,9 @@
+[Unit]
+Description=video-uniq: deploy origin/main after green CI
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/video-uniq/deploy/autodeploy.sh
+TimeoutStartSec=1800

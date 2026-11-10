@@ -1,0 +1,10 @@
+[Unit]
+Description=video-uniq: check for new green commits every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
