@@ -7,6 +7,7 @@ from app.core import texts
 from app.core.config import settings
 from app.core.exceptions import (
     FileTooLargeError,
+    InsufficientBalanceError,
     ProbeError,
     SourceDownloadError,
     TooManyActiveJobsError,
@@ -44,6 +45,8 @@ async def handle_video(message: Message, intake: IntakeService) -> None:
         await intake.accept(request, on_queued)
     except FileTooLargeError as exc:
         await status.edit_text(texts.TOO_LARGE.format(size=exc.size_mb, limit=exc.limit_mb))
+    except InsufficientBalanceError as exc:
+        await status.edit_text(texts.not_enough_credits(exc.required, exc.balance))
     except TooManyActiveJobsError as exc:
         await status.edit_text(texts.TOO_MANY_JOBS.format(limit=exc.limit))
     except VideoRejectedError as exc:

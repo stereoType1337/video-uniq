@@ -32,6 +32,8 @@ class Job:
     mode: Mode
     copies: int
     status: JobStatus
+    credits_reserved: int = 0
+    settled: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,30 +47,38 @@ class NewJob:
     copies: int
 
 
+INSERT_JOB_SQL = """
+    INSERT INTO jobs (user_id, chat_id, status_message_id, source_sha256, source_key,
+                      mode, copies, credits_reserved)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    RETURNING *
+"""
+
+
+def job_insert_args(job: NewJob, credits_reserved: int) -> tuple[object, ...]:
+    return (
+        job.user_id,
+        job.chat_id,
+        job.status_message_id,
+        job.source_sha256,
+        job.source_key,
+        job.mode.value,
+        job.copies,
+        credits_reserved,
+    )
+
+
 class JobRepository(BaseRepository):
     async def create(self, job: NewJob) -> Job:
-        row = await self.fetchrow(
-            """
-            INSERT INTO jobs
-                (user_id, chat_id, status_message_id, source_sha256, source_key, mode, copies)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            RETURNING *
-            """,
-            job.user_id,
-            job.chat_id,
-            job.status_message_id,
-            job.source_sha256,
-            job.source_key,
-            job.mode.value,
-            job.copies,
-        )
+        """Create a job without reserving credits (billing uses create_job_reserving)."""
+        row = await self.fetchrow(INSERT_JOB_SQL, *job_insert_args(job, 0))
         if row is None:
             raise RuntimeError("job insert returned no row")
-        return _to_job(row)
+        return to_job(row)
 
     async def get(self, job_id: int) -> Job | None:
         row = await self.fetchrow("SELECT * FROM jobs WHERE id = $1", job_id)
-        return _to_job(row) if row is not None else None
+        return to_job(row) if row is not None else None
 
     async def set_status(self, job_id: int, status: JobStatus) -> None:
         await self.execute(
@@ -101,7 +111,7 @@ class JobRepository(BaseRepository):
         return int(value)
 
 
-def _to_job(row: asyncpg.Record) -> Job:
+def to_job(row: asyncpg.Record) -> Job:
     return Job(
         id=row["id"],
         user_id=row["user_id"],
@@ -112,4 +122,6 @@ def _to_job(row: asyncpg.Record) -> Job:
         mode=Mode(row["mode"]),
         copies=row["copies"],
         status=JobStatus(row["status"]),
+        credits_reserved=row["credits_reserved"],
+        settled=row["settled_at"] is not None,
     )

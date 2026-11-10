@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import secrets
 import shutil
 import uuid
 from collections.abc import Awaitable, Callable
@@ -11,7 +10,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-import asyncpg
 import structlog
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
@@ -19,14 +17,16 @@ from arq.connections import ArqRedis
 
 from app.core.exceptions import (
     FileTooLargeError,
+    InsufficientBalanceError,
     ProbeError,
     SourceDownloadError,
     TooManyActiveJobsError,
 )
 from app.db.repositories.jobs import Job, NewJob
+from app.services.billing import Account, job_cost
 from app.services.fingerprints import file_sha256
 from app.services.probe import probe_source
-from app.services.render_plan import Mode, SourceInfo
+from app.services.render_plan import SourceInfo
 from app.services.video_rules import (
     Rejection,
     RejectReason,
@@ -43,14 +43,19 @@ QUEUE_NAME = "uniqualize"
 TASK_NAME = "uniqualize"
 
 
-class UserStore(Protocol):
-    async def upsert(self, tg_id: int, username: str | None, ref_code: str) -> asyncpg.Record: ...
+class AccountStore(Protocol):
+    async def ensure(
+        self, tg_id: int, username: str | None, start_arg: str | None = None
+    ) -> Account: ...
 
 
 class JobStore(Protocol):
-    async def create(self, job: NewJob) -> Job: ...
     async def count_active(self, user_id: int) -> int: ...
     async def queue_position(self, job_id: int) -> int: ...
+
+
+class ReservationStore(Protocol):
+    async def create_job_reserving(self, job: NewJob, cost: int) -> Job: ...
 
 
 class FileFetcher(Protocol):
@@ -83,8 +88,9 @@ class IntakeConfig:
 
 @dataclass(frozen=True, slots=True)
 class IntakeDeps:
-    users: UserStore
+    accounts: AccountStore
     jobs: JobStore
+    reservations: ReservationStore
     fetcher: FileFetcher
     queue: JobQueue
 
@@ -101,9 +107,12 @@ class IntakeService:
         """``on_queued`` runs before the job hits the queue, so a fast worker cannot be
         overtaken by the "you are in the queue" message."""
         self._check_metadata(request)
-        user = await self._deps.users.upsert(request.tg_id, request.username, _ref_code())
-        if await self._deps.jobs.count_active(user["id"]) >= self._config.max_active_jobs:
-            raise TooManyActiveJobsError(user["id"], self._config.max_active_jobs)
+        user = (await self._deps.accounts.ensure(request.tg_id, request.username)).user
+        cost = job_cost(user.mode, user.copies)
+        if user.balance < cost:  # cheap pre-check; the reservation below is authoritative
+            raise InsufficientBalanceError(user.id, cost, user.balance)
+        if await self._deps.jobs.count_active(user.id) >= self._config.max_active_jobs:
+            raise TooManyActiveJobsError(user.id, self._config.max_active_jobs)
 
         source_key = f"src/{uuid.uuid4().hex}.mp4"
         source_path = self._config.work_dir / source_key
@@ -115,20 +124,23 @@ class IntakeService:
             source_path.unlink(missing_ok=True)
             raise
 
-        job = await self._deps.jobs.create(
-            NewJob(
-                user_id=user["id"],
-                chat_id=request.chat_id,
-                status_message_id=request.status_message_id,
-                source_sha256=await asyncio.to_thread(file_sha256, source_path),
-                source_key=source_key,
-                mode=Mode(user["mode"]),
-                copies=user["copies"],
-            )
+        new_job = NewJob(
+            user_id=user.id,
+            chat_id=request.chat_id,
+            status_message_id=request.status_message_id,
+            source_sha256=await asyncio.to_thread(file_sha256, source_path),
+            source_key=source_key,
+            mode=user.mode,
+            copies=user.copies,
         )
+        try:
+            job = await self._deps.reservations.create_job_reserving(new_job, cost)
+        except InsufficientBalanceError:
+            source_path.unlink(missing_ok=True)
+            raise
         await on_queued(job, await self._deps.jobs.queue_position(job.id))
         await self._deps.queue.enqueue(job.id)
-        logger.info("job_queued", job_id=job.id, user_id=user["id"], copies=job.copies)
+        logger.info("job_queued", job_id=job.id, user_id=user.id, copies=job.copies, cost=cost)
         return job
 
     def _check_metadata(self, request: IntakeRequest) -> None:
@@ -150,10 +162,6 @@ class IntakeService:
     def _check_size(self, size: int | None) -> None:
         if size is not None and size > self._config.max_file_mb * _BYTES_IN_MB:
             raise FileTooLargeError(size / _BYTES_IN_MB, self._config.max_file_mb)
-
-
-def _ref_code() -> str:
-    return secrets.token_urlsafe(6)
 
 
 class TelegramFileFetcher:

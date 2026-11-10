@@ -1,18 +1,18 @@
 from __future__ import annotations
 
 from aiogram import Router
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandObject, CommandStart
 from aiogram.types import Message
+
+from app.core import texts
+from app.services.billing import AccountService
 
 router = Router(name="start")
 
-_WELCOME = (
-    "Пришлите видео файлом до 150 МБ. Я сделаю несколько уникальных копий, "
-    "которые соцсети считают новыми, а зрители не отличат от оригинала.\n\n"
-    "Команды: /menu — главное меню, /balance — баланс, /support — поддержка."
-)
-
 
 @router.message(CommandStart())
-async def handle_start(message: Message) -> None:
-    await message.answer(_WELCOME)
+async def handle_start(message: Message, command: CommandObject, accounts: AccountService) -> None:
+    if message.from_user is None:
+        return
+    account = await accounts.ensure(message.from_user.id, message.from_user.username, command.args)
+    await message.answer(texts.welcome(account.trial_credits))

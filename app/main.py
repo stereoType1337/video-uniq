@@ -13,10 +13,13 @@ from app.core.bot import build_bot
 from app.core.config import settings
 from app.core.logging import setup_logging
 from app.db.pool import close_pool, init_pool
+from app.db.repositories.billing import BillingRepository
 from app.db.repositories.jobs import JobRepository
 from app.db.repositories.users import UserRepository
+from app.handlers.billing import router as billing_router
 from app.handlers.start import router as start_router
 from app.handlers.upload import router as upload_router
+from app.services.billing import AccountService, PaymentFlow
 from app.services.intake import (
     ArqJobQueue,
     IntakeConfig,
@@ -34,11 +37,17 @@ _REDIS_KEY = "arq_redis"
 async def _on_startup(bot: Bot, dispatcher: Dispatcher) -> None:
     pool = await init_pool()
     redis = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+    users, billing = UserRepository(pool), BillingRepository(pool)
+    accounts = AccountService(users, billing, settings.free_credits)
     dispatcher[_REDIS_KEY] = redis
+    dispatcher["users"] = users
+    dispatcher["accounts"] = accounts
+    dispatcher["payments"] = PaymentFlow(billing)
     dispatcher["intake"] = IntakeService(
         IntakeDeps(
-            users=UserRepository(pool),
+            accounts=accounts,
             jobs=JobRepository(pool),
+            reservations=billing,
             fetcher=TelegramFileFetcher(bot),
             queue=ArqJobQueue(redis),
         ),
@@ -52,7 +61,11 @@ async def _on_startup(bot: Bot, dispatcher: Dispatcher) -> None:
             ffprobe_bin=settings.ffprobe_bin,
         ),
     )
-    await bot.set_webhook(settings.webhook_url, drop_pending_updates=True)
+    await bot.set_webhook(
+        settings.webhook_url,
+        drop_pending_updates=True,
+        allowed_updates=dispatcher.resolve_used_update_types(),
+    )
     logger.info(
         "webhook_set", host=settings.webhook_host, local_api=bool(settings.telegram_api_url)
     )
@@ -71,6 +84,7 @@ def build_app() -> web.Application:
     bot = build_bot()
     dp = Dispatcher()
     dp.include_router(start_router)
+    dp.include_router(billing_router)
     dp.include_router(upload_router)
     dp.startup.register(_on_startup)
     dp.shutdown.register(_on_shutdown)

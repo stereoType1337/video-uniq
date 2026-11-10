@@ -11,15 +11,19 @@ from app.core.bot import build_bot
 from app.core.config import settings
 from app.core.logging import setup_logging
 from app.db.pool import close_pool, get_pool, init_pool
+from app.db.repositories.billing import BillingRepository
 from app.db.repositories.jobs import JobRepository
 from app.services.intake import QUEUE_NAME
 from app.services.notifier import JobNotifier
 from app.workers.uniqualize import (
+    BILLING_KEY,
     JOBS_KEY,
     NOTIFIER_KEY,
     PROCESSOR_KEY,
     build_processor,
     cleanup_files,
+    expire_credits,
+    refund_stale_jobs,
     uniqualize,
 )
 
@@ -31,6 +35,7 @@ async def _on_startup(ctx: dict[str, Any]) -> None:
     bot = build_bot()
     ctx[_BOT_KEY] = bot
     ctx[JOBS_KEY] = JobRepository(get_pool())
+    ctx[BILLING_KEY] = BillingRepository(get_pool())
     ctx[PROCESSOR_KEY] = build_processor()
     ctx[NOTIFIER_KEY] = JobNotifier(bot, Path(settings.work_dir))
 
@@ -45,7 +50,11 @@ async def _on_shutdown(ctx: dict[str, Any]) -> None:
 class WorkerSettings:
     functions = [uniqualize]
     # arq's WorkerCoroutine protocol wants *args/**kwargs in the signature; ours needs none
-    cron_jobs = [cron(cleanup_files, minute=17, unique=True)]  # type: ignore[arg-type]
+    cron_jobs = [
+        cron(cleanup_files, minute=17, unique=True),  # type: ignore[arg-type]
+        cron(refund_stale_jobs, minute=set(range(0, 60, 10)), unique=True),
+        cron(expire_credits, hour=3, minute=5, unique=True),
+    ]
     on_startup = _on_startup
     on_shutdown = _on_shutdown
     queue_name = QUEUE_NAME

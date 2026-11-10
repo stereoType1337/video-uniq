@@ -9,6 +9,7 @@ from aiogram.methods import EditMessageText
 from aiogram.types import FSInputFile
 
 from app.core import texts
+from app.db.repositories.billing import Settlement
 from app.db.repositories.jobs import Job, JobStatus
 from app.services.job_processor import JobResult
 from app.services.notifier import JobNotifier
@@ -42,20 +43,24 @@ def _notifier(bot: FakeBot, tmp_path: Path) -> JobNotifier:
 
 async def test_delivers_documents_then_reports(tmp_path: Path) -> None:
     bot = FakeBot()
+    notifier = _notifier(bot, tmp_path)
     result = JobResult(1, JobStatus.PARTIAL, ["jobs/1/0.mp4", "jobs/1/1.mp4"], [2])
-    await _notifier(bot, tmp_path).deliver(_job(), result)
+    sent = await notifier.send_copies(_job(), result)
+    await notifier.finish(_job(), sent, Settlement(1, reserved=3, charged=2, refunded=1, balance=7))
+    assert sent == 2
     assert bot.calls == [
         ("document", "0.mp4"),
         ("document", "1.mp4"),
-        ("edit", texts.done(2)),
-        ("message", texts.partial(2, 1)),
+        ("edit", texts.done(2, 2, 7)),
+        ("message", texts.partial(2, 1, 1)),
     ]
 
 
-async def test_failed_job_reports_failure(tmp_path: Path) -> None:
+async def test_nothing_delivered_reports_failure_and_refund(tmp_path: Path) -> None:
     bot = FakeBot()
-    await _notifier(bot, tmp_path).deliver(_job(), JobResult(1, JobStatus.FAILED, [], [0, 1, 2]))
-    assert bot.calls == [("edit", texts.FAILED)]
+    settlement = Settlement(1, reserved=3, charged=0, refunded=3, balance=10)
+    await _notifier(bot, tmp_path).finish(_job(), 0, settlement)
+    assert bot.calls == [("edit", texts.failed(3))]
 
 
 async def test_falls_back_to_new_message_when_edit_fails(tmp_path: Path) -> None:

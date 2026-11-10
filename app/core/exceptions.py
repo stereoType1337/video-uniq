@@ -12,9 +12,9 @@ class UserNotFoundError(AppError):
 
 
 class InsufficientBalanceError(AppError):
-    def __init__(self, tg_id: int, required: int, balance: int) -> None:
-        super().__init__(f"User {tg_id} needs {required} credits, has {balance}")
-        self.tg_id = tg_id
+    def __init__(self, user_id: int, required: int, balance: int) -> None:
+        super().__init__(f"User {user_id} needs {required} credits, has {balance}")
+        self.user_id = user_id
         self.required = required
         self.balance = balance
 
@@ -65,3 +65,17 @@ class SourceDownloadError(AppError):
         super().__init__(f"Cannot download {file_id}: {reason}")
         self.file_id = file_id
         self.reason = reason
+
+
+class PaymentNotFoundError(AppError):
+    def __init__(self, payment_id: int) -> None:
+        super().__init__(f"Payment {payment_id} not found")
+        self.payment_id = payment_id
+
+
+class PaymentAmountMismatchError(AppError):
+    def __init__(self, payment_id: int, expected: int, received: int) -> None:
+        super().__init__(f"Payment {payment_id}: expected {expected}, received {received}")
+        self.payment_id = payment_id
+        self.expected = expected
+        self.received = received

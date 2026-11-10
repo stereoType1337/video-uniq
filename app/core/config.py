@@ -40,6 +40,10 @@ class Settings(BaseSettings):
 
     credit_ttl_days: int = 30
     referral_bonus: int = 30
+    free_credits: int = 5  # one Base run of 5 copies
+    # Jobs left unsettled by a dead worker get refunded after these delays
+    stale_finished_minutes: int = 10
+    stale_running_minutes: int = 120
 
     # .env is shared with the tg_api container (TELEGRAM_API_ID/HASH are its, not ours)
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")

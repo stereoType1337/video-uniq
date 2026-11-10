@@ -3,12 +3,18 @@ from __future__ import annotations
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any
 
 import pytest
 
-from app.core.exceptions import FileTooLargeError, ProbeError, TooManyActiveJobsError
+from app.core.exceptions import (
+    FileTooLargeError,
+    InsufficientBalanceError,
+    ProbeError,
+    TooManyActiveJobsError,
+)
 from app.db.repositories.jobs import Job, JobStatus, NewJob
+from app.db.repositories.users import User
+from app.services.billing import Account
 from app.services.fingerprints import file_sha256
 from app.services.intake import IntakeConfig, IntakeDeps, IntakeRequest, IntakeService
 from app.services.render_plan import Mode
@@ -19,19 +25,27 @@ pytestmark = pytest.mark.skipif(shutil.which("ffprobe") is None, reason="ffprobe
 _MB = 1024 * 1024
 
 
-class FakeUsers:
-    async def upsert(self, tg_id: int, username: str | None, ref_code: str) -> dict[str, Any]:
-        return {"id": 1, "tg_id": tg_id, "mode": "hd", "copies": 5}
+class FakeAccounts:
+    def __init__(self, balance: int = 100) -> None:
+        self.balance = balance
+
+    async def ensure(
+        self, tg_id: int, username: str | None, start_arg: str | None = None
+    ) -> Account:
+        user = User(1, tg_id, username, self.balance, Mode.HD, 5, "ref", None)
+        return Account(user, created=False, trial_credits=0)
 
 
 class FakeJobs:
     def __init__(self, active: int = 0, ahead: int = 0) -> None:
         self.created: list[NewJob] = []
+        self.costs: list[int] = []
         self.active = active
         self.ahead = ahead
 
-    async def create(self, job: NewJob) -> Job:
+    async def create_job_reserving(self, job: NewJob, cost: int) -> Job:
         self.created.append(job)
+        self.costs.append(cost)
         return Job(
             id=len(self.created),
             user_id=job.user_id,
@@ -96,10 +110,13 @@ class EventLog:
         self.events.append(f"queued:{job.id}:{position}")
 
 
-def _service(tmp_path: Path, jobs: FakeJobs, log: EventLog, fetcher: FakeFetcher) -> IntakeService:
+def _service(
+    tmp_path: Path, jobs: FakeJobs, log: EventLog, fetcher: FakeFetcher, balance: int = 100
+) -> IntakeService:
     deps = IntakeDeps(
-        users=FakeUsers(),  # type: ignore[arg-type]
+        accounts=FakeAccounts(balance),
         jobs=jobs,
+        reservations=jobs,
         fetcher=fetcher,
         queue=log,
     )
@@ -130,6 +147,17 @@ async def test_accept_stores_source_and_enqueues_after_status(
     assert stored.read_bytes() == clips["ok"].read_bytes()
     assert job.source_sha256 == file_sha256(stored)
     assert (job.mode, job.copies, job.chat_id, job.status_message_id) == (Mode.HD, 5, 42, 9)
+    assert jobs.costs == [10], "HD costs 2 credits per copy"
+
+
+async def test_rejects_when_balance_too_low_before_download(tmp_path: Path) -> None:
+    jobs, log = FakeJobs(), EventLog()
+    fetcher = FakeFetcher(payload=b"must not be fetched")
+    service = _service(tmp_path, jobs, log, fetcher, balance=9)
+    with pytest.raises(InsufficientBalanceError) as info:
+        await service.accept(_request(), log.on_queued)
+    assert (info.value.required, info.value.balance) == (10, 9)
+    assert not (tmp_path / "src").exists() and not jobs.created
 
 
 async def test_rejects_large_file_before_download(tmp_path: Path) -> None:
