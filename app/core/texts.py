@@ -55,9 +55,9 @@ def processing(copies: int) -> str:
 
 
 def done(count: int, charged: int, balance: int | None) -> str:
+    files = "файл ниже" if count == 1 else "каждая — отдельный файл ниже"
     text = (
-        f"🎉 Готово: {count} {plural(count, *_UNIQUE_COPY_FORMS)}, "
-        f"каждая — отдельный файл ниже.\nСписано {charged} кр."
+        f"🎉 Готово: {count} {plural(count, *_UNIQUE_COPY_FORMS)}, {files}.\nСписано {charged} кр."
     )
     return text + (f", на балансе {balance} кр." if balance is not None else ".")
 
@@ -271,7 +271,8 @@ def card(info: CardInfo) -> str:
 
 
 def card_start_button(copies: int, cost: int) -> str:
-    return f"▶ Сделать {copies_word(copies)} — {cost} кр."
+    accusative = plural(copies, "копию", "копии", "копий")  # "сделать 1 копию / 3 копии"
+    return f"▶ Сделать {copies} {accusative} — {cost} кр."
 
 
 def card_topup_button(missing: int) -> str:

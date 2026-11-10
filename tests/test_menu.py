@@ -398,3 +398,16 @@ async def test_admin_profiles_screen_toggles(admin_harness: Harness, pool: async
     calls = await admin_harness.press(AdminAction(action="profile_toggle", profile="iphone").pack())
     assert "⛔ 📱 iphone" in next(c for c in calls if isinstance(c, EditMessageText)).text
     assert "iphone" not in {p.id for p in await repo.enabled()}
+
+
+@pytest.mark.parametrize(
+    ("copies", "button"),
+    [
+        (1, "▶ Сделать 1 копию — 1 кр."),
+        (3, "▶ Сделать 3 копии — 3 кр."),
+        (5, "▶ Сделать 5 копий — 5 кр."),
+    ],
+)
+def test_russian_forms_on_buttons(copies: int, button: str) -> None:
+    assert texts.card_start_button(copies, copies) == button
+    assert "файл ниже" in texts.done(1, 1, 0) and "каждая" not in texts.done(1, 1, 0)
