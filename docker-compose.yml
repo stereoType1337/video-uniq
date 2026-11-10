@@ -48,7 +48,7 @@ services:
       - ./work/tg:/var/lib/telegram-bot-api
 
   db:
-    image: postgres:16-alpine
+    image: postgres:16-alpine  # keep in sync with PG_MAJOR in Dockerfile (backups)
     container_name: video_uniq_db
     restart: unless-stopped
     environment:
