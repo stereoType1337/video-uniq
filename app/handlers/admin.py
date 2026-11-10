@@ -31,6 +31,7 @@ from app.core.config import settings
 from app.core.exceptions import InsufficientBalanceError
 from app.db.repositories.admin import AdminRepository, PeriodCounts, Summary, UserCard
 from app.db.repositories.billing import BillingRepository
+from app.db.repositories.profiles import ProfileRepository, ProfileState
 
 Screen = tuple[str, InlineKeyboardMarkup]
 GRANT_STEPS = (10, 50, 100, -10)
@@ -43,9 +44,10 @@ class IsAdmin(BaseFilter):
 
 
 class AdminAction(CallbackData, prefix="adm"):
-    action: str  # home | search | card | grant | ledger | export_users | export_payments
+    action: str  # home | search | card | grant | ledger | export_* | profiles | profile_toggle
     user_id: int = 0
     amount: int = 0
+    profile: str = ""
 
 
 class AdminSearch(StatesGroup):
@@ -88,7 +90,8 @@ def render_home(s: Summary) -> Screen:
     builder.button(text="🔄 Обновить", callback_data=AdminAction(action="home"))
     builder.button(text="📥 Юзеры CSV", callback_data=AdminAction(action="export_users"))
     builder.button(text="📥 Платежи CSV", callback_data=AdminAction(action="export_payments"))
-    builder.adjust(1, 1, 2)
+    builder.button(text="🎭 Профили метаданных", callback_data=AdminAction(action="profiles"))
+    builder.adjust(1, 1, 2, 1)
     return text, builder.as_markup()
 
 
@@ -125,6 +128,23 @@ def render_card(card: UserCard) -> Screen:
     builder.button(text="◀️ В админку", callback_data=AdminAction(action="home"))
     builder.adjust(len(GRANT_STEPS), 1, 2)
     return text, builder.as_markup()
+
+
+def render_profiles(states: list[ProfileState]) -> Screen:
+    lines = ["🎭 Профили метаданных", "Нажмите, чтобы включить или выключить. 📱 — камеры", ""]
+    builder = InlineKeyboardBuilder()
+    for state in states:
+        p = state.profile
+        icon = "✅" if state.enabled else "⛔"
+        kind = "📱" if p.kind == "camera" else "🎬"
+        lines.append(f"{icon} {kind} {p.id} · вес {p.weight:g} · {p.container} · {p.filename}")
+        builder.button(
+            text=f"{icon} {p.id}",
+            callback_data=AdminAction(action="profile_toggle", profile=p.id),
+        )
+    builder.button(text="◀️ В админку", callback_data=AdminAction(action="home"))
+    builder.adjust(2)
+    return "\n".join(lines), builder.as_markup()
 
 
 def _date(value: datetime | None) -> str:
@@ -215,6 +235,23 @@ async def handle_ledger(
     if not rows:
         lines.append("Операций нет")
     await _redraw(query, ("\n".join(lines), _back_to_card(callback_data.user_id)))
+
+
+@router.callback_query(AdminAction.filter(F.action == "profiles"))
+async def handle_profiles(query: CallbackQuery, profiles: ProfileRepository) -> None:
+    await _redraw(query, render_profiles(await profiles.states()))
+
+
+@router.callback_query(AdminAction.filter(F.action == "profile_toggle"))
+async def handle_profile_toggle(
+    query: CallbackQuery, callback_data: AdminAction, profiles: ProfileRepository
+) -> None:
+    enabled = await profiles.toggle(callback_data.profile)
+    if enabled is None:
+        await query.answer("Профиль не найден", show_alert=True)
+        return
+    notice = f"{callback_data.profile}: {'включён' if enabled else 'выключен'}"
+    await _redraw(query, render_profiles(await profiles.states()), notice=notice)
 
 
 @router.callback_query(AdminAction.filter(F.action.in_({"export_users", "export_payments"})))

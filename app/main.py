@@ -20,6 +20,7 @@ from app.db.pool import close_pool, init_pool
 from app.db.repositories.admin import AdminRepository
 from app.db.repositories.billing import BillingRepository
 from app.db.repositories.jobs import JobRepository
+from app.db.repositories.profiles import ProfileRepository
 from app.db.repositories.users import UserRepository
 from app.handlers.admin import router as admin_router
 from app.handlers.billing import router as billing_router
@@ -35,6 +36,7 @@ from app.services.intake import (
     IntakeService,
     TelegramFileFetcher,
 )
+from app.services.metadata import load_profiles
 from app.services.video_card import CardDeps, VideoCardService
 from app.services.video_rules import VideoRules
 
@@ -56,6 +58,9 @@ BOT_COMMANDS = [
 async def _on_startup(bot: Bot, dispatcher: Dispatcher) -> None:
     pool = await init_pool()
     await run_migrations(pool)
+    profiles = ProfileRepository(pool)
+    await profiles.sync(load_profiles())
+    dispatcher["profiles"] = profiles
     redis = await create_pool(RedisSettings.from_dsn(settings.redis_url))
     users, billing = UserRepository(pool), BillingRepository(pool)
     jobs = JobRepository(pool)

@@ -29,6 +29,7 @@ from app.core.config import settings
 from app.db.repositories.admin import AdminRepository
 from app.db.repositories.billing import BillingRepository
 from app.db.repositories.jobs import Job, JobRepository, JobStatus, NewJob
+from app.db.repositories.profiles import ProfileRepository
 from app.db.repositories.users import NewUser, User, UserRepository
 from app.handlers.admin import AdminAction
 from app.handlers.admin import router as admin_router
@@ -46,6 +47,7 @@ from app.handlers.screens import (
 )
 from app.handlers.start import router as start_router
 from app.services.billing import PACKS, AccountService, PaymentFlow
+from app.services.metadata import load_profiles
 from app.services.render_plan import Mode, SourceInfo
 from app.services.video_card import CardDeps, VideoCardService
 
@@ -376,3 +378,23 @@ async def test_card_cancel_and_foreign_card(
     calls = await harness.press(_press_card(own, "cancel"))
     assert any(isinstance(c, EditMessageText) and c.text == texts.CARD_CANCELLED for c in calls)
     assert await pool.fetchval("SELECT status FROM jobs WHERE id = $1", own) == "cancelled"
+
+
+async def test_camera_profiles_toggle_in_settings(harness: Harness, pool: asyncpg.Pool) -> None:
+    await harness.text("/start")
+    calls = await harness.press(SettingsAction(field="camera", value="toggle").pack())
+    edit = next(c for c in calls if isinstance(c, EditMessageText))
+    assert "Профили камер включены" in edit.text
+    assert await pool.fetchval("SELECT camera_profiles FROM users WHERE tg_id = 42") is True
+
+
+async def test_admin_profiles_screen_toggles(admin_harness: Harness, pool: asyncpg.Pool) -> None:
+    repo = ProfileRepository(pool)
+    await repo.sync(load_profiles())
+    admin_harness.dp["profiles"] = repo
+    calls = await admin_harness.press(AdminAction(action="profiles").pack())
+    screen = next(c for c in calls if isinstance(c, EditMessageText))
+    assert "✅ 📱 iphone" in screen.text and "✅ 🎬 capcut" in screen.text
+    calls = await admin_harness.press(AdminAction(action="profile_toggle", profile="iphone").pack())
+    assert "⛔ 📱 iphone" in next(c for c in calls if isinstance(c, EditMessageText)).text
+    assert "iphone" not in {p.id for p in await repo.enabled()}

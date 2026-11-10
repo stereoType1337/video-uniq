@@ -13,6 +13,7 @@ from app.db.repositories.jobs import Job, JobStatus
 from app.services import job_processor as jp
 from app.services.fingerprints import Fingerprint, QualityThresholds, file_sha256, phash_distance
 from app.services.job_processor import JobProcessor, ProcessorConfig
+from app.services.metadata import Profile, load_profiles
 from app.services.probe import probe_source
 from app.services.render_plan import AudioMode, Mode
 
@@ -46,8 +47,8 @@ class FakeCopies:
         self.saved.append(copy)
         return len(self.saved)
 
-    async def done_indexes(self, job_id: int) -> set[int]:
-        return {c.plan.copy_index for c in self.saved if c.job_id == job_id}
+    async def done_keys(self, job_id: int) -> dict[int, str]:
+        return {c.plan.copy_index: c.output_key for c in self.saved if c.job_id == job_id}
 
     async def recent_fingerprints(self, source_sha256: str, limit: int) -> list[Fingerprint]:
         return [c.fingerprint for c in self.saved][-limit:]
@@ -93,7 +94,7 @@ async def test_job_produces_accepted_unique_copies(tmp_path: Path) -> None:
     result = await processor.process(7)
 
     assert result.status is JobStatus.DONE
-    assert result.output_keys == ["jobs/7/0.mp4", "jobs/7/1.mp4", "jobs/7/2.mp4"]
+    assert result.output_keys == ["jobs/7/0/0.mp4", "jobs/7/1/1.mp4", "jobs/7/2/2.mp4"]
     assert all((tmp_path / key).is_file() for key in result.output_keys)
     assert jobs.statuses == [JobStatus.PROCESSING, JobStatus.DONE]
     assert len({c.fingerprint.sha256 for c in store.saved}) == 3
@@ -150,7 +151,7 @@ async def test_parallel_copies_respect_slots_and_stay_unique(
     result = await processor.process(7)
 
     assert result.status is JobStatus.DONE and len(result.output_keys) == 5
-    assert result.output_keys == [f"jobs/7/{i}.mp4" for i in range(5)], "ordered by index"
+    assert result.output_keys == [f"jobs/7/{i}/{i}.mp4" for i in range(5)], "ordered by index"
     assert 2 <= peak <= 3, f"renders must overlap but never exceed the slots (peak={peak})"
     prints = [c.fingerprint.phash for c in store.saved]
     pairs = [phash_distance(a, b) for k, a in enumerate(prints) for b in prints[k + 1 :]]
@@ -179,3 +180,26 @@ async def test_sound_choice_is_honoured_and_not_gated(
     assert result.status is JobStatus.DONE, "keeping the sound must not fail the audio check"
     out = await probe_source(tmp_path / result.output_keys[0])
     assert (out.sample_rate is None) is (audio_mode is AudioMode.MUTE)
+
+
+class FakeProfiles:
+    def __init__(self, only: str) -> None:
+        self.only = only
+
+    async def enabled(self) -> tuple[Profile, ...]:
+        return tuple(p for p in load_profiles() if p.id == self.only)
+
+
+async def test_copies_are_named_by_profile_and_unique(tmp_path: Path) -> None:
+    processor, jobs, store = _processor(tmp_path, copies=4)
+    jobs.job = replace(jobs.job, camera_profiles=True)
+    processor._profiles = FakeProfiles("iphone")
+    result = await processor.process(7)
+
+    names = [Path(k).name for k in result.output_keys]
+    assert len(set(names)) == 4 and all(n.startswith("IMG_") and n.endswith(".MOV") for n in names)
+    assert all((tmp_path / k).is_file() for k in result.output_keys)
+    assert {c.plan.metadata.profile_id for c in store.saved if c.plan.metadata} == {"iphone"}
+
+    again = await processor.process(7)
+    assert again.output_keys == result.output_keys, "resume returns the stored file names"

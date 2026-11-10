@@ -86,6 +86,10 @@ async def handle_setting_change(
     users: UserRepository,
 ) -> None:
     user = (await accounts.ensure(query.from_user.id, query.from_user.username)).user
+    if callback_data.field == "camera":
+        user = await users.toggle_camera_profiles(user.id)
+        await _redraw(query, render_settings(user))
+        return
     change = parse_setting(callback_data, user)
     if change is None:
         await query.answer("Эта кнопка устарела, откройте /settings заново.", show_alert=True)

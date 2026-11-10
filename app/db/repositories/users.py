@@ -19,6 +19,7 @@ class User:
     ref_code: str
     referred_by: int | None
     audio_mode: AudioMode = AudioMode.SHIFT
+    camera_profiles: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +79,15 @@ class UserRepository(BaseRepository):
             raise RuntimeError(f"user {user_id} vanished")
         return to_user(row)
 
+    async def toggle_camera_profiles(self, user_id: int) -> User:
+        row = await self.fetchrow(
+            "UPDATE users SET camera_profiles = NOT camera_profiles WHERE id = $1 RETURNING *",
+            user_id,
+        )
+        if row is None:
+            raise RuntimeError(f"user {user_id} vanished")
+        return to_user(row)
+
     async def get_balance(self, tg_id: int) -> int:
         value = await self.fetchval("SELECT balance FROM users WHERE tg_id = $1", tg_id)
         return int(value) if value is not None else 0
@@ -94,4 +104,5 @@ def to_user(row: asyncpg.Record) -> User:
         ref_code=row["ref_code"],
         referred_by=row["referred_by"],
         audio_mode=AudioMode(row["audio_mode"]),
+        camera_profiles=row["camera_profiles"],
     )

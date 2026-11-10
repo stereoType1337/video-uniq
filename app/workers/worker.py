@@ -14,7 +14,9 @@ from app.db.migrate import run_migrations
 from app.db.pool import close_pool, get_pool, init_pool
 from app.db.repositories.billing import BillingRepository
 from app.db.repositories.jobs import JobRepository
+from app.db.repositories.profiles import ProfileRepository
 from app.services.intake import QUEUE_NAME
+from app.services.metadata import load_profiles
 from app.services.notifier import JobNotifier
 from app.workers.uniqualize import (
     BILLING_KEY,
@@ -32,7 +34,9 @@ _BOT_KEY = "bot"
 
 
 async def _on_startup(ctx: dict[str, Any]) -> None:
-    await run_migrations(await init_pool())
+    pool = await init_pool()
+    await run_migrations(pool)
+    await ProfileRepository(pool).sync(load_profiles())
     bot = build_bot()
     ctx[_BOT_KEY] = bot
     ctx[JOBS_KEY] = JobRepository(get_pool())

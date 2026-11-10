@@ -130,6 +130,7 @@ class IntakeService:
                 copies=user.copies,
                 audio_mode=user.audio_mode,
                 source=source,
+                camera_profiles=user.camera_profiles,
             )
         )
         logger.info("draft_created", job_id=draft.id, user_id=user.id)

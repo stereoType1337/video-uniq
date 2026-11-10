@@ -8,6 +8,8 @@ from pathlib import Path
 import structlog
 
 from app.core.exceptions import RenderError
+from app.services.metadata import ffmpeg_args as metadata_args
+from app.services.metadata import patch_container
 from app.services.render_plan import AudioPlan, RenderPlan
 
 logger = structlog.get_logger()
@@ -39,22 +41,17 @@ def build_command(
         cmd.append("-an")
     else:
         cmd += ["-map", "0:a:0", "-af", build_audio_filters(plan.audio, plan.time.speed)]
-        cmd += ["-c:a", "aac", "-b:a", f"{plan.audio.bitrate_k}k"]
+        # bitexact: FFmpeg's AAC encoder otherwise embeds "Lavc<version>" in the bitstream
+        cmd += ["-c:a", "aac", "-b:a", f"{plan.audio.bitrate_k}k", "-flags:a", "+bitexact"]
     if threads > 0:
         cmd += ["-threads", str(threads), "-filter_threads", str(threads)]
     cmd += _codec_args(plan)
-    cmd += [
-        "-map_metadata",
-        "-1",
-        "-map_chapters",
-        "-1",
-        "-fflags",
-        "+bitexact",
-        "-movflags",
-        "+faststart",
-        "-shortest",
-        str(dst),
-    ]
+    cmd += ["-map_metadata", "-1", "-map_chapters", "-1", "-fflags", "+bitexact"]
+    if plan.metadata is None:
+        cmd += ["-movflags", "+faststart"]
+    else:
+        cmd += metadata_args(plan.metadata, has_audio=plan.audio is not None)
+    cmd += ["-shortest", str(dst)]
     return cmd
 
 
@@ -129,4 +126,6 @@ async def render_copy(
         tail = stderr.decode(errors="replace")[-2000:]
         logger.error("render_failed", copy_index=plan.copy_index, code=process.returncode)
         raise RenderError(plan.copy_index, tail)
+    if plan.metadata is not None:
+        await asyncio.to_thread(patch_container, dst, plan.metadata)
     logger.info("render_done", copy_index=plan.copy_index, seed=plan.seed[:12])

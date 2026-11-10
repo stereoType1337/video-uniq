@@ -47,6 +47,7 @@ class Job:
     source_duration: float | None = None
     source_width: int | None = None
     source_height: int | None = None
+    camera_profiles: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,13 +61,14 @@ class NewJob:
     copies: int
     audio_mode: AudioMode = AudioMode.SHIFT
     source: SourceInfo | None = None
+    camera_profiles: bool = False
 
 
 INSERT_JOB_SQL = """
     INSERT INTO jobs (user_id, chat_id, status_message_id, source_sha256, source_key,
                       mode, copies, credits_reserved, status, audio_mode,
-                      source_duration, source_width, source_height)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                      source_duration, source_width, source_height, camera_profiles)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
     RETURNING *
 """
 
@@ -89,6 +91,7 @@ def job_insert_args(
         src.duration if src is not None else None,
         src.width if src is not None else None,
         src.height if src is not None else None,
+        job.camera_profiles,
     )
 
 
@@ -205,4 +208,5 @@ def to_job(row: asyncpg.Record) -> Job:
         source_duration=row["source_duration"],
         source_width=row["source_width"],
         source_height=row["source_height"],
+        camera_profiles=row["camera_profiles"],
     )

@@ -28,7 +28,7 @@ async def test_job_and_copy_round_trip(pool: asyncpg.Pool) -> None:
     fingerprint = Fingerprint(sha256="f0", phash=(2**64 - 1, 5), chromaprint=(2**32 - 1, 0))
     await copies.save_accepted(AcceptedCopy(job.id, plan, "jobs/1/0.mp4", fingerprint))
 
-    assert await copies.done_indexes(job.id) == {0}
+    assert await copies.done_keys(job.id) == {0: "jobs/1/0.mp4"}
     assert await copies.recent_fingerprints("abc", 10) == [fingerprint]
     assert await copies.recent_fingerprints("other", 10) == []
 

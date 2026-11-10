@@ -13,6 +13,7 @@ from app.db.pool import get_pool
 from app.db.repositories.billing import BillingRepository
 from app.db.repositories.copies import CopyRepository
 from app.db.repositories.jobs import JobRepository, JobStatus
+from app.db.repositories.profiles import ProfileRepository
 from app.services.cleanup import remove_expired
 from app.services.fingerprints import QualityThresholds, Tools
 from app.services.job_processor import JobProcessor, ProcessorConfig
@@ -43,7 +44,7 @@ def build_processor() -> JobProcessor:
         render_slots=settings.render_slots,
         ffmpeg_threads=settings.ffmpeg_threads,
     )
-    return JobProcessor(JobRepository(pool), CopyRepository(pool), config)
+    return JobProcessor(JobRepository(pool), CopyRepository(pool), config, ProfileRepository(pool))
 
 
 async def uniqualize(ctx: dict[str, Any], job_id: int) -> dict[str, Any]:

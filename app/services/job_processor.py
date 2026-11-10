@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
@@ -24,6 +25,7 @@ from app.services.fingerprints import (
     compute_fingerprint,
     evaluate_copy,
 )
+from app.services.metadata import MetadataPlan, Profile, choose_metadata
 from app.services.probe import probe_source
 from app.services.render_plan import (
     AudioMode,
@@ -38,6 +40,7 @@ from app.services.uniqualizer import render_copy
 logger = structlog.get_logger()
 
 _ATTEMPT_STRIDE = 1000
+_NAME_ATTEMPTS = 5
 
 
 class JobStore(Protocol):
@@ -45,9 +48,13 @@ class JobStore(Protocol):
     async def set_status(self, job_id: int, status: JobStatus) -> None: ...
 
 
+class ProfileStore(Protocol):
+    async def enabled(self) -> tuple[Profile, ...]: ...
+
+
 class CopyStore(Protocol):
     async def save_accepted(self, copy: AcceptedCopy) -> int: ...
-    async def done_indexes(self, job_id: int) -> set[int]: ...
+    async def done_keys(self, job_id: int) -> dict[int, str]: ...
     async def recent_fingerprints(self, source_sha256: str, limit: int) -> list[Fingerprint]: ...
 
 
@@ -84,14 +91,24 @@ class _JobContext:
     original: Fingerprint
     history: list[Fingerprint]
     out_dir: Path
+    profiles: tuple[Profile, ...] = ()
+    now: datetime = field(default_factory=lambda: datetime.now(UTC))
+    used_names: set[str] = field(default_factory=set)
     # Copies render in parallel, but each verdict must see every copy accepted before it.
     gate: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 class JobProcessor:
-    def __init__(self, jobs: JobStore, copies: CopyStore, config: ProcessorConfig) -> None:
+    def __init__(
+        self,
+        jobs: JobStore,
+        copies: CopyStore,
+        config: ProcessorConfig,
+        profiles: ProfileStore | None = None,
+    ) -> None:
         self._jobs = jobs
         self._copies = copies
+        self._profiles = profiles
         self._config = config
         self._render_slots = asyncio.Semaphore(max(config.render_slots, 1))
 
@@ -108,14 +125,13 @@ class JobProcessor:
             await self._jobs.set_status(job_id, JobStatus.FAILED)
             return JobResult(job_id, JobStatus.FAILED, [], list(range(job.copies)))
 
-        done = await self._copies.done_indexes(job_id)
+        done = await self._copies.done_keys(job_id)
+        ctx.used_names.update(Path(key).name for key in done.values())
         pending = [i for i in range(job.copies) if i not in done]
         keys = await asyncio.gather(*(self._make_and_report(ctx, i, on_copy) for i in pending))
-        made = dict(zip(pending, keys, strict=True))
-        outputs = [
-            self._output_key(job_id, i) for i in range(job.copies) if i in done or made.get(i)
-        ]
-        failed = [i for i in pending if made[i] is None]
+        made = {i: k for i, k in zip(pending, keys, strict=True) if k is not None}
+        outputs = [key for i in range(job.copies) if (key := done.get(i) or made.get(i))]
+        failed = [i for i in pending if i not in made]
 
         status = _final_status(len(outputs), len(failed))
         await self._jobs.set_status(job_id, status)
@@ -134,7 +150,8 @@ class JobProcessor:
         )
         out_dir = self._config.work_dir / "jobs" / str(job.id)
         out_dir.mkdir(parents=True, exist_ok=True)
-        return _JobContext(job, source_path, source, original, history, out_dir)
+        profiles = await self._profiles.enabled() if self._profiles is not None else ()
+        return _JobContext(job, source_path, source, original, history, out_dir, profiles)
 
     async def _make_and_report(
         self, ctx: _JobContext, index: int, on_copy: OnCopy | None
@@ -150,13 +167,16 @@ class JobProcessor:
             plan = apply_audio_mode(
                 generate_plan(seed, index, ctx.source, ctx.job.mode), ctx.job.audio_mode
             )
+            plan = replace(plan, metadata=self._metadata(ctx, seed))
             tmp = ctx.out_dir / f"{index}.attempt{attempt}.mp4"
             fingerprint = await self._render(ctx, plan, tmp)
             if fingerprint is not None:
                 async with ctx.gate:
                     if self._accepted(ctx, plan, fingerprint, attempt):
-                        key = self._output_key(ctx.job.id, index)
-                        tmp.replace(self._config.work_dir / key)
+                        key = self._output_key(ctx.job.id, index, plan)
+                        final = self._config.work_dir / key
+                        final.parent.mkdir(parents=True, exist_ok=True)
+                        tmp.replace(final)
                         copy = AcceptedCopy(ctx.job.id, plan, key, fingerprint)
                         await self._copies.save_accepted(copy)
                         ctx.history.append(fingerprint)
@@ -196,8 +216,25 @@ class JobProcessor:
         return verdict.accepted
 
     @staticmethod
-    def _output_key(job_id: int, index: int) -> str:
-        return f"jobs/{job_id}/{index}.mp4"
+    def _metadata(ctx: _JobContext, seed: str) -> MetadataPlan | None:
+        """A profile per copy; file names stay unique within the job."""
+        if not ctx.profiles:
+            return None
+        for salt in range(_NAME_ATTEMPTS):
+            meta = choose_metadata(f"{seed}:{salt}", ctx.profiles, ctx.now, ctx.job.camera_profiles)
+            if meta.filename not in ctx.used_names:
+                ctx.used_names.add(meta.filename)
+                return meta
+        stem, dot, ext = meta.filename.rpartition(".")
+        unique = f"{stem}_{len(ctx.used_names)}{dot}{ext}"
+        ctx.used_names.add(unique)
+        return replace(meta, filename=unique)
+
+    @staticmethod
+    def _output_key(job_id: int, index: int, plan: RenderPlan) -> str:
+        """The file is sent under its own name, so the name is the profile's file name."""
+        name = plan.metadata.filename if plan.metadata is not None else f"{index}.mp4"
+        return f"jobs/{job_id}/{index}/{name}"
 
 
 def _final_status(ok: int, failed: int) -> JobStatus:

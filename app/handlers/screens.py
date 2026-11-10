@@ -19,7 +19,7 @@ Screen = tuple[str, InlineKeyboardMarkup]
 
 
 class SettingsAction(CallbackData, prefix="set"):
-    field: str  # "mode" | "copies"
+    field: str  # "mode" | "copies" | "camera"
     value: str
 
 
@@ -60,11 +60,15 @@ def render_settings(user: User) -> Screen:
             text=texts.copies_button(copies, copies == user.copies),
             callback_data=SettingsAction(field="copies", value=str(copies)),
         )
+    builder.button(
+        text=texts.camera_button(user.camera_profiles),
+        callback_data=SettingsAction(field="camera", value="toggle"),
+    )
     builder.button(text=texts.BTN_BALANCE, callback_data=OpenScreen(name="balance"))
-    builder.adjust(len(Mode), len(COPIES_OPTIONS), 1)
+    builder.adjust(len(Mode), len(COPIES_OPTIONS), 1, 1)
     text = texts.settings_screen(
         user.mode.value, user.copies, PRICE_PER_COPY[user.mode], user.balance
-    )
+    ) + texts.camera_hint(user.camera_profiles)
     return text, builder.as_markup()
 
 

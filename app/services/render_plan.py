@@ -13,6 +13,8 @@ from dataclasses import asdict, dataclass, replace
 from enum import StrEnum
 from typing import Any
 
+from app.services.metadata import MetadataPlan
+
 
 class Mode(StrEnum):
     BASE = "base"
@@ -137,6 +139,7 @@ class RenderPlan:
     color: ColorPlan
     audio: AudioPlan | None
     codec: CodecPlan
+    metadata: MetadataPlan | None = None  # None: neutral container, tags stripped
 
     def to_json(self) -> dict[str, Any]:
         return asdict(self)

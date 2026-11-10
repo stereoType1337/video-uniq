@@ -30,8 +30,9 @@ class CopyRepository(BaseRepository):
         copy_id = await self.fetchval(
             """
             WITH c AS (
-                INSERT INTO copies (job_id, copy_index, seed, plan_json, output_key, status)
-                VALUES ($1, $2, $3, $4::jsonb, $5, $6)
+                INSERT INTO copies
+                    (job_id, copy_index, seed, plan_json, output_key, status, profile_id)
+                VALUES ($1, $2, $3, $4::jsonb, $5, $6, $10)
                 RETURNING id
             )
             INSERT INTO fingerprints (copy_id, phash_json, chromaprint, sha256)
@@ -47,14 +48,18 @@ class CopyRepository(BaseRepository):
             json.dumps(encode_phash(copy.fingerprint.phash)),
             encode_chromaprint(copy.fingerprint.chromaprint),
             copy.fingerprint.sha256,
+            copy.plan.metadata.profile_id if copy.plan.metadata is not None else None,
         )
         return int(copy_id)
 
-    async def done_indexes(self, job_id: int) -> set[int]:
+    async def done_keys(self, job_id: int) -> dict[int, str]:
+        """copy_index -> output_key of copies already accepted (an arq retry resumes)."""
         rows = await self.fetch(
-            "SELECT copy_index FROM copies WHERE job_id = $1 AND status = $2", job_id, _DONE
+            "SELECT copy_index, output_key FROM copies WHERE job_id = $1 AND status = $2",
+            job_id,
+            _DONE,
         )
-        return {int(r["copy_index"]) for r in rows}
+        return {int(r["copy_index"]): r["output_key"] for r in rows}
 
     async def recent_fingerprints(self, source_sha256: str, limit: int) -> list[Fingerprint]:
         """Fingerprints of earlier copies made from the same source file, newest first."""

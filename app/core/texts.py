@@ -284,3 +284,19 @@ def card_audio_button(audio: str) -> str:
 
 def progress(ready: int, total: int) -> str:
     return f"⚙️ Готово {ready} из {total}…"
+
+
+# --- metadata profiles -----------------------------------------------------------------
+
+
+def camera_button(enabled: bool) -> str:
+    return f"📱 Профили камер: {'вкл' if enabled else 'выкл'}"
+
+
+def camera_hint(enabled: bool) -> str:
+    if enabled:
+        return (
+            "\n\n📱 Профили камер включены: часть копий будет выглядеть как снятая на телефон "
+            "(производитель, модель, версия ОС в метаданных). Используйте только для своего видео."
+        )
+    return "\n\n🎬 Копии выглядят как экспорт из видеоредакторов (CapCut, InShot и др.)."
