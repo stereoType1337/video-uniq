@@ -95,7 +95,7 @@ async def _on_startup(bot: Bot, dispatcher: Dispatcher) -> None:
         allowed_updates=dispatcher.resolve_used_update_types(),
     )
     logger.info(
-        "webhook_set", host=settings.webhook_host, local_api=bool(settings.telegram_api_url)
+        "webhook_set", host=settings.webhook_host, ip=ip, local_api=bool(settings.telegram_api_url)
     )
 
 
