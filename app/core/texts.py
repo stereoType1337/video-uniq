@@ -301,3 +301,10 @@ def camera_hint(enabled: bool) -> str:
             "(производитель, модель, версия ОС в метаданных). Используйте только для своего видео."
         )
     return "\n\n🎬 Копии выглядят как экспорт из видеоредакторов (CapCut, InShot и др.)."
+
+
+def backup_caption(name: str, size: int, entries: int) -> str:
+    return (
+        f"🗄 Бэкап БД {name} · {size / 1024:.0f} КБ · объектов: {entries}\n"
+        "Восстановление: README → «Бэкапы»."
+    )

@@ -25,6 +25,7 @@ services:
       - tg_api
     volumes:
       - ./work:/srv/work
+      - ./backups:/srv/backups
     deploy:
       # One worker owns the machine (8 vCPU / 16 GB): 4 parallel FFmpeg x 2 threads inside,
       # see RENDER_SLOTS / FFMPEG_THREADS. Scale replicas only on a bigger host.

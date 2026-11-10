@@ -6,7 +6,11 @@ from pathlib import Path
 from typing import Any
 
 import structlog
+from aiogram import Bot
+from aiogram.exceptions import TelegramAPIError
+from aiogram.types import FSInputFile
 
+from app.core import texts
 from app.core.config import settings
 from app.core.exceptions import JobNotFoundError
 from app.db.pool import get_pool
@@ -14,6 +18,7 @@ from app.db.repositories.billing import BillingRepository
 from app.db.repositories.copies import CopyRepository
 from app.db.repositories.jobs import JobRepository, JobStatus
 from app.db.repositories.profiles import ProfileRepository
+from app.services.backup import BackupError, make_backup
 from app.services.cleanup import remove_expired
 from app.services.fingerprints import QualityThresholds, Tools
 from app.services.job_processor import JobProcessor, ProcessorConfig
@@ -25,6 +30,7 @@ PROCESSOR_KEY = "processor"
 NOTIFIER_KEY = "notifier"
 JOBS_KEY = "jobs"
 BILLING_KEY = "billing"
+BOT_KEY = "bot"
 
 
 def build_processor() -> JobProcessor:
@@ -108,6 +114,28 @@ async def refund_stale_jobs(ctx: dict[str, Any]) -> int:
             await jobs.set_status(job_id, JobStatus.FAILED)
         settlement = await billing.settle_job(job_id, delivered=0)
         if settlement is not None:
-            logger.warning("stale_job_refunded", job_id=job_id, refunded=settlement.refunded)
+            # a worker died mid-job: worth a look even though the user got the refund
+            logger.error("stale_job_refunded", job_id=job_id, refunded=settlement.refunded)
             await notifier.finish(job, 0, settlement)
     return len(stale)
+
+
+async def backup_database(ctx: dict[str, Any]) -> str:
+    bot: Bot = ctx[BOT_KEY]
+    try:
+        backup = await make_backup(
+            settings.database_url, Path(settings.backup_dir), settings.backup_keep
+        )
+    except BackupError:
+        logger.exception("backup_failed")  # -> alert
+        raise
+    if settings.backup_to_telegram:
+        caption = texts.backup_caption(backup.path.name, backup.size, backup.toc_entries)
+        for chat_id in settings.admin_id_set:
+            try:
+                await bot.send_document(
+                    chat_id, FSInputFile(backup.path), caption=caption, disable_notification=True
+                )
+            except TelegramAPIError:
+                logger.exception("backup_upload_failed", chat_id=chat_id)
+    return backup.path.name

@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     stale_running_minutes: int = 120
     draft_ttl_minutes: int = 60  # an unstarted video card expires after this
 
+    backup_dir: str = "/srv/backups"
+    backup_keep: int = 14
+    backup_to_telegram: bool = True  # the off-server copy goes to ADMIN_IDS as a document
+
     # .env is shared with the tg_api container (TELEGRAM_API_ID/HASH are its, not ours)
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

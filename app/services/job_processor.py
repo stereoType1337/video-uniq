@@ -135,7 +135,8 @@ class JobProcessor:
 
         status = _final_status(len(outputs), len(failed))
         await self._jobs.set_status(job_id, status)
-        logger.info("job_finished", job_id=job_id, status=status, ok=len(outputs))
+        log = logger.error if status is JobStatus.FAILED else logger.info
+        log("job_finished", job_id=job_id, status=status, ok=len(outputs), failed=len(failed))
         return JobResult(job_id, status, outputs, failed, resumed=len(done))
 
     async def _prepare(self, job: Job) -> _JobContext:

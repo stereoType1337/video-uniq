@@ -11,6 +11,7 @@ import io
 from datetime import datetime
 
 import asyncpg
+import structlog
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import BaseFilter, Command
@@ -25,6 +26,7 @@ from aiogram.types import (
     TelegramObject,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from arq.connections import ArqRedis
 
 from app.core import texts
 from app.core.config import settings
@@ -32,6 +34,9 @@ from app.core.exceptions import InsufficientBalanceError
 from app.db.repositories.admin import AdminRepository, PeriodCounts, Summary, UserCard
 from app.db.repositories.billing import BillingRepository
 from app.db.repositories.profiles import ProfileRepository, ProfileState
+from app.services.intake import QUEUE_NAME
+
+logger = structlog.get_logger()
 
 Screen = tuple[str, InlineKeyboardMarkup]
 GRANT_STEPS = (10, 50, 100, -10)
@@ -91,7 +96,9 @@ def render_home(s: Summary) -> Screen:
     builder.button(text="📥 Юзеры CSV", callback_data=AdminAction(action="export_users"))
     builder.button(text="📥 Платежи CSV", callback_data=AdminAction(action="export_payments"))
     builder.button(text="🎭 Профили метаданных", callback_data=AdminAction(action="profiles"))
-    builder.adjust(1, 1, 2, 1)
+    builder.button(text="🗄 Бэкап сейчас", callback_data=AdminAction(action="backup"))
+    builder.button(text="🧪 Тест алерта", callback_data=AdminAction(action="alert_test"))
+    builder.adjust(1, 1, 2, 1, 2)
     return text, builder.as_markup()
 
 
@@ -252,6 +259,18 @@ async def handle_profile_toggle(
         return
     notice = f"{callback_data.profile}: {'включён' if enabled else 'выключен'}"
     await _redraw(query, render_profiles(await profiles.states()), notice=notice)
+
+
+@router.callback_query(AdminAction.filter(F.action == "backup"))
+async def handle_backup(query: CallbackQuery, arq_redis: ArqRedis) -> None:
+    await arq_redis.enqueue_job("backup_database", _queue_name=QUEUE_NAME)
+    await query.answer("Бэкап поставлен в очередь, файл придёт сюда", show_alert=True)
+
+
+@router.callback_query(AdminAction.filter(F.action == "alert_test"))
+async def handle_alert_test(query: CallbackQuery) -> None:
+    logger.error("alert_test", requested_by=query.from_user.id)
+    await query.answer("Тестовая ошибка записана, алерт придёт в течение секунд")
 
 
 @router.callback_query(AdminAction.filter(F.action.in_({"export_users", "export_payments"})))

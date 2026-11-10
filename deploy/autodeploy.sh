@@ -26,6 +26,7 @@ else: print("failure")')
 
 case "$verdict" in
   pending) echo "${target:0:7}: tests not finished yet" ;;
-  failure) echo "${target:0:7}: tests failed, not deploying"; echo "$target" > "$STATE/skipped" ;;
+  failure) echo "${target:0:7}: tests failed, not deploying"; echo "$target" > "$STATE/skipped"
+           "$APP_DIR/deploy/notify.sh" "❌ ${target:0:7}: тесты на GitHub упали, в прод не выкатываю" ;;
   success) echo "${target:0:7}: tests passed, deploying"; exec "$APP_DIR/deploy/deploy.sh" "$target" ;;
 esac

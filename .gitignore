@@ -13,3 +13,4 @@ data/profiles/*
 !data/profiles/.gitkeep
 *.mp4
 *.mov
+backups/

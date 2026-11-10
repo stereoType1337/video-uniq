@@ -12,6 +12,7 @@ from aiohttp import web
 from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
 
+from app.core import alerts
 from app.core.bot import build_bot, webhook_ip
 from app.core.config import settings
 from app.core.logging import setup_logging
@@ -62,6 +63,7 @@ async def _on_startup(bot: Bot, dispatcher: Dispatcher) -> None:
     await profiles.sync(load_profiles())
     dispatcher["profiles"] = profiles
     redis = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+    alerts.install(alerts.AlertSender(bot, settings.admin_id_set, redis, component="bot"))
     users, billing = UserRepository(pool), BillingRepository(pool)
     jobs = JobRepository(pool)
     dispatcher["admin"] = AdminRepository(pool)

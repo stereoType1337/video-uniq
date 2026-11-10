@@ -81,6 +81,24 @@ systemctl daemon-reload && systemctl enable --now video-uniq-autodeploy.timer
 journalctl -u video-uniq-autodeploy -f    # логи выкаток
 ```
 
+## Алерты и бэкапы
+
+- **Алерты**: любая ошибка уровня ERROR в боте или воркере (structlog и stdlib: aiogram, arq)
+  приходит в Telegram всем из `ADMIN_IDS`, одинаковые — не чаще раза в 5 минут (дедуп в Redis).
+  Автодеплой шлёт «✅ выкачено», «❌ тесты упали», «🚨 деплой провален» через
+  `deploy/notify.sh` (напрямую в `telegram-bot-api`, работает и при упавшем боте).
+  Проверка: `/admin` → «🧪 Тест алерта».
+- **Бэкапы**: каждый день в 03:30 UTC воркер делает `pg_dump`, проверяет архив
+  (`pg_restore --list`), хранит 14 последних в `./backups` на сервере и присылает файл в
+  Telegram админам (внешняя копия). Перед каждым деплоем — ещё один в `/opt/backups`.
+  Вручную: `/admin` → «🗄 Бэкап сейчас».
+- **Восстановление** (на сервере, данные текущей БД будут заменены):
+  ```bash
+  cd /opt/video-uniq && docker compose stop bot worker
+  docker compose exec -T db pg_restore -U uniq -d uniq --clean --if-exists < backups/uniq-<дата>.dump
+  docker compose start bot worker
+  ```
+
 ## Разработка
 
 ```bash
