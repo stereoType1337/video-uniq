@@ -2,18 +2,15 @@ from __future__ import annotations
 
 from aiogram import Bot, F, Router
 from aiogram.filters import Command
-from aiogram.filters.callback_data import CallbackData
 from aiogram.types import CallbackQuery, LabeledPrice, Message, PreCheckoutQuery
-from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.core import texts
 from app.core.config import settings
 from app.core.exceptions import PaymentAmountMismatchError, PaymentNotFoundError
 from app.db.repositories.billing import ProviderVerdict
 from app.db.repositories.users import UserRepository
+from app.handlers.screens import BuyPack
 from app.services.billing import (
-    PACKS,
-    PRICE_PER_COPY,
     STARS_CURRENCY,
     AccountService,
     PaymentFlow,
@@ -22,33 +19,6 @@ from app.services.billing import (
 )
 
 router = Router(name="billing")
-
-_MODE_LABELS = {"base": "Base (до 720p)", "hd": "HD (1080p)", "hd_plus": "HD+ (1080p, сильнее)"}
-
-
-class BuyPack(CallbackData, prefix="buy"):
-    code: str
-
-
-@router.message(Command("balance"))
-async def handle_balance(message: Message, accounts: AccountService) -> None:
-    if message.from_user is None:
-        return
-    account = await accounts.ensure(message.from_user.id, message.from_user.username)
-    prices = {_MODE_LABELS[m.value]: p for m, p in PRICE_PER_COPY.items()}
-    await message.answer(texts.balance(account.user.balance, prices, settings.credit_ttl_days))
-
-
-@router.message(Command("buy"))
-async def handle_buy(message: Message) -> None:
-    builder = InlineKeyboardBuilder()
-    for pack in PACKS:
-        builder.button(
-            text=texts.pack_button(pack.credits, pack.stars),
-            callback_data=BuyPack(code=pack.code),
-        )
-    builder.adjust(1)
-    await message.answer(texts.BUY_TITLE, reply_markup=builder.as_markup())
 
 
 @router.callback_query(BuyPack.filter())
@@ -109,6 +79,7 @@ async def handle_successful_payment(message: Message, payments: PaymentFlow) -> 
 
 
 @router.message(Command("ref"))
+@router.message(F.text == texts.BTN_INVITE)
 async def handle_ref(message: Message, bot: Bot, accounts: AccountService) -> None:
     if message.from_user is None:
         return

@@ -60,6 +60,17 @@ class UserRepository(BaseRepository):
             raise RuntimeError("user upsert returned no row")
         return to_user(row), bool(row["created"])
 
+    async def update_settings(self, user_id: int, mode: Mode, copies: int) -> User:
+        row = await self.fetchrow(
+            "UPDATE users SET mode = $2, copies = $3 WHERE id = $1 RETURNING *",
+            user_id,
+            mode.value,
+            copies,
+        )
+        if row is None:
+            raise RuntimeError(f"user {user_id} vanished")
+        return to_user(row)
+
     async def get_balance(self, tg_id: int) -> int:
         value = await self.fetchval("SELECT balance FROM users WHERE tg_id = $1", tg_id)
         return int(value) if value is not None else 0

@@ -60,20 +60,13 @@ def not_enough_credits(cost: int, balance: int) -> str:
 
 def welcome(trial_credits: int) -> str:
     text = (
-        "Пришлите видео файлом — сделаю несколько уникальных копий, которые соцсети считают "
-        "новыми, а зрители не отличат от оригинала.\n\n"
-        "/balance — баланс и цены, /buy — пополнить, /ref — пригласить друга."
+        "Пришлите видео файлом (📎 → Файл) — сделаю несколько уникальных копий, которые "
+        "соцсети считают новыми, а зрители не отличат от оригинала.\n\n"
+        "Режим и число копий — в ⚙️ Настройках, баланс и пополнение — в 💰 Балансе."
     )
     if trial_credits:
         text += f"\n\n🎁 Вам начислено {trial_credits} кредитов, чтобы попробовать бесплатно."
     return text
-
-
-def balance(credits: int, prices: dict[str, int], expires_days: int) -> str:
-    lines = [f"💰 Баланс: {credits} кр.", "", "Цена одной копии:"]
-    lines += [f"• {mode} — {price} кр." for mode, price in prices.items()]
-    lines += ["", f"Купленные кредиты действуют {expires_days} дней с последней покупки."]
-    return "\n".join(lines)
 
 
 BUY_TITLE = "Выберите пакет кредитов (оплата Telegram Stars):"
@@ -140,3 +133,76 @@ def rejected(rejection: Rejection) -> str:
 def _duration(seconds: float) -> str:
     minutes, sec = divmod(round(seconds), 60)
     return f"{minutes} мин {sec:02d} с" if minutes else f"{sec} с"
+
+
+# --- menu ------------------------------------------------------------------------------
+
+BTN_UNIQUALIZE = "🎬 Уникализировать"
+BTN_BALANCE = "💰 Баланс"
+BTN_SETTINGS = "⚙️ Настройки"
+BTN_INVITE = "🎯 Пригласить"
+BTN_HELP = "❓ Помощь"
+BTN_BUY = "💳 Пополнить"
+MENU_PLACEHOLDER = "Пришлите видео файлом"
+
+MODE_TITLES = {"base": "Base", "hd": "HD", "hd_plus": "HD+"}
+MODE_DESCRIPTIONS = {
+    "base": "до 720p, невидимые изменения",
+    "hd": "до 1080p, изменения сильнее",
+    "hd_plus": "до 1080p, плюс лёгкие видимые: виньетка, зерно",
+}
+
+
+def menu_hint(mode: str, copies: int, cost: int) -> str:
+    return (
+        f"Пришлите видео файлом (📎 → Файл).\n"
+        f"Сейчас: {MODE_TITLES[mode]}, {copies} копий — {cost} кр. за запуск. "
+        "Поменять — в ⚙️ Настройках."
+    )
+
+
+def settings_screen(mode: str, copies: int, price: int, balance: int) -> str:
+    return (
+        "⚙️ Настройки\n\n"
+        f"Режим: {MODE_TITLES[mode]} — {MODE_DESCRIPTIONS[mode]}\n"
+        f"Копий за запуск: {copies}\n\n"
+        f"Один запуск: {copies} × {price} кр. = {copies * price} кр. На балансе {balance} кр."
+    )
+
+
+def mode_button(mode: str, price: int, selected: bool) -> str:
+    return f"{'✅ ' if selected else ''}{MODE_TITLES[mode]} · {price} кр."
+
+
+def copies_button(copies: int, selected: bool) -> str:
+    return f"{'✅ ' if selected else ''}{copies}"
+
+
+HELP = (
+    "❓ Как это работает\n\n"
+    "1. Пришлите видео файлом (📎 → Файл) — так Telegram не пережимает его.\n"
+    "2. Бот сделает копии: у каждой своя геометрия, скорость, цвет, звук и кодирование, "
+    "а каждая копия проверяется на отличие от оригинала и от прежних копий.\n"
+    "3. Копии придут файлами — выкладывайте как новые ролики.\n\n"
+    "📐 Требования: mp4 или mov, до {max_mb} МБ, от 0.5 с до 3 мин, "
+    "до 4K при 30 fps или до 1080p при 60 fps. Вертикальные и горизонтальные — любые.\n\n"
+    "💰 Кредиты: копия стоит 1–3 кр. в зависимости от режима. Списываются только за выданные "
+    "копии. Купленные кредиты действуют {ttl} дней с последней покупки.\n\n"
+    "🔒 Видео и копии удаляются через {files_ttl} ч.\n\n"
+    "Важно: площадка всё равно может узнать ролик — мы повышаем шансы, но не гарантируем."
+)
+
+
+def support(contact: str) -> str:
+    if contact:
+        return f"Поддержка: {contact}. Опишите проблему и приложите номер задачи, если есть."
+    return "Поддержка скоро появится. Пока что опишите проблему ответом на это сообщение."
+
+
+def balance_screen(credits: int, mode: str, copies: int, cost: int, ttl_days: int) -> str:
+    return (
+        f"💰 Баланс: {credits} кр.\n"
+        f"Текущий запуск ({MODE_TITLES[mode]}, {copies} копий) стоит {cost} кр.\n\n"
+        "Цена копии: Base 1 кр., HD 2 кр., HD+ 3 кр.\n"
+        f"Купленные кредиты действуют {ttl_days} дней с последней покупки."
+    )

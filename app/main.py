@@ -4,6 +4,7 @@ from pathlib import Path
 
 import structlog
 from aiogram import Bot, Dispatcher
+from aiogram.types import BotCommand
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
 from arq import create_pool
@@ -17,6 +18,7 @@ from app.db.repositories.billing import BillingRepository
 from app.db.repositories.jobs import JobRepository
 from app.db.repositories.users import UserRepository
 from app.handlers.billing import router as billing_router
+from app.handlers.menu import router as menu_router
 from app.handlers.start import router as start_router
 from app.handlers.upload import router as upload_router
 from app.services.billing import AccountService, PaymentFlow
@@ -32,6 +34,16 @@ from app.services.video_rules import VideoRules
 logger = structlog.get_logger()
 
 _REDIS_KEY = "arq_redis"
+
+BOT_COMMANDS = [
+    BotCommand(command="start", description="Главная"),
+    BotCommand(command="settings", description="Режим и число копий"),
+    BotCommand(command="balance", description="Баланс и цены"),
+    BotCommand(command="buy", description="Пополнить баланс"),
+    BotCommand(command="ref", description="Пригласить друга"),
+    BotCommand(command="help", description="Как это работает"),
+    BotCommand(command="support", description="Поддержка"),
+]
 
 
 async def _on_startup(bot: Bot, dispatcher: Dispatcher) -> None:
@@ -61,6 +73,7 @@ async def _on_startup(bot: Bot, dispatcher: Dispatcher) -> None:
             ffprobe_bin=settings.ffprobe_bin,
         ),
     )
+    await bot.set_my_commands(BOT_COMMANDS)
     await bot.set_webhook(
         settings.webhook_url,
         drop_pending_updates=True,
@@ -84,6 +97,7 @@ def build_app() -> web.Application:
     bot = build_bot()
     dp = Dispatcher()
     dp.include_router(start_router)
+    dp.include_router(menu_router)
     dp.include_router(billing_router)
     dp.include_router(upload_router)
     dp.startup.register(_on_startup)

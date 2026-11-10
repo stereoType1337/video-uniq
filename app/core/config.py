@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     webhook_host: str
     webhook_port: int = 8080
     required_channel: str = ""
+    support_contact: str = ""  # @username or link shown by /support
 
     # Local telegram-bot-api server (lifts the 20 MB download / 50 MB upload limits).
     # Empty url -> cloud Bot API. Files dir: where the server writes files (its own view)
