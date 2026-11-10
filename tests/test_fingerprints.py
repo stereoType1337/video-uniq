@@ -18,6 +18,7 @@ from app.services.fingerprints import (
     encode_chromaprint,
     encode_phash,
     evaluate_copy,
+    is_audio_informative,
     phash_distance,
     phash_frame,
 )
@@ -72,6 +73,20 @@ def test_encoding_round_trips() -> None:
 
 def _fp(sha: str, phash: tuple[int, ...], chroma: tuple[int, ...] | None = None) -> Fingerprint:
     return Fingerprint(sha256=sha, phash=phash, chromaprint=chroma)
+
+
+def test_steady_audio_is_not_informative() -> None:
+    assert not is_audio_informative((0xDEADBEEF,) * 200), "a steady tone repeats itself"
+    assert not is_audio_informative(_random_ints(7, 10, 32)), "too short to judge"
+    assert is_audio_informative(_random_ints(8, 200, 32))
+
+
+def test_gate_ignores_audio_when_source_audio_is_steady() -> None:
+    steady = (0x12345678,) * 200
+    original = _fp("o", _random_ints(1, 32, 64), steady)
+    candidate = _fp("c", _random_ints(2, 32, 64), steady)  # BER 0 to the original
+    verdict = evaluate_copy(candidate, original, [], _THRESHOLDS)
+    assert verdict.accepted and verdict.audio_to_original is None
 
 
 def test_gate_accepts_distinct_copy() -> None:

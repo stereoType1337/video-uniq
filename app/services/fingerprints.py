@@ -36,6 +36,8 @@ _COS = [
     for u in range(_DCT_SIDE)
 ]
 _CHROMA_MAX_OFFSET = 40
+_MIN_INFORMATIVE_FRAMES = 8  # ~1 s of Chromaprint frames per half
+_STATIONARY_BER = 0.15  # halves of the source closer than this: audio carries no identity
 _CHROMA_LENGTH_S = 120
 _READ_CHUNK = 1 << 20
 
@@ -165,6 +167,18 @@ def chromaprint_distance(a: Sequence[int], b: Sequence[int]) -> float:
     return best
 
 
+def is_audio_informative(fingerprint: Sequence[int]) -> bool:
+    """False when the source audio barely changes over time (a steady tone, a drone, silence):
+    then every copy matches the original whatever we do, and the audio check can only reject
+    good copies forever. Measured: a pure 440 Hz tone gives BER 0.00-0.06 for all copies,
+    speech 0.12-0.27."""
+    half = len(fingerprint) // 2
+    if half < _MIN_INFORMATIVE_FRAMES:
+        return False
+    first, second = fingerprint[:half], fingerprint[half:]
+    return chromaprint_distance(first, second) >= _STATIONARY_BER
+
+
 def evaluate_copy(
     candidate: Fingerprint,
     original: Fingerprint,
@@ -175,7 +189,11 @@ def evaluate_copy(
     to_copies = [phash_distance(candidate.phash, p.phash) for p in previous]
     nearest = min(to_copies) if to_copies else None
     audio = None
-    if candidate.chromaprint is not None and original.chromaprint is not None:
+    if (
+        candidate.chromaprint is not None
+        and original.chromaprint is not None
+        and is_audio_informative(original.chromaprint)
+    ):
         audio = chromaprint_distance(candidate.chromaprint, original.chromaprint)
     reason = _rejection_reason(candidate, previous, (to_original, nearest, audio), thresholds)
     return QualityVerdict(
