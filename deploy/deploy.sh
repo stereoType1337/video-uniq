@@ -30,6 +30,10 @@ docker compose up -d --build --remove-orphans 2>&1 | grep -v '^time=' || true
 echo "== health"
 for _ in $(seq 1 30); do
   if curl -fs --max-time 5 "$HEALTH_URL" >/dev/null; then
+    echo "== webhook delivery"
+    if ! docker compose exec -T bot python -m app.scripts.check_webhook; then
+      docker compose logs --tail 50 bot tg_api; exit 1
+    fi
     docker compose ps --format 'table {{.Name}}\t{{.Status}}'
     docker image prune -f >/dev/null
     echo "deployed $(git rev-parse --short HEAD)"

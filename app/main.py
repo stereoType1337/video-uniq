@@ -12,7 +12,7 @@ from aiohttp import web
 from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
 
-from app.core.bot import build_bot
+from app.core.bot import build_bot, webhook_ip
 from app.core.config import settings
 from app.core.logging import setup_logging
 from app.db.migrate import run_migrations
@@ -88,9 +88,10 @@ async def _on_startup(bot: Bot, dispatcher: Dispatcher) -> None:
         ),
     )
     await bot.set_my_commands(BOT_COMMANDS)
+    ip = await webhook_ip(settings.webhook_url, settings.telegram_api_url)
     await bot.set_webhook(
         settings.webhook_url,
-        drop_pending_updates=True,
+        ip_address=ip,
         allowed_updates=dispatcher.resolve_used_update_types(),
     )
     logger.info(
