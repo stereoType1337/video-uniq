@@ -64,6 +64,15 @@ cd /opt/caddy && docker compose up -d             # дальше: docker exec ca
 юзербота: локальный Bot API авторизуется токеном бота). Caddy конфиг лежит в
 `caddy/video-uniq.conf`, порты наружу не пробрасываются (SKILL §13).
 
+## Автодеплой
+
+`.github/workflows/deploy.yml`: на каждый push в `main` — ruff, mypy, pytest (Postgres,
+FFmpeg, fpcalc), затем SSH на сервер и `deploy/deploy.sh`: бэкап БД в `/opt/backups`
+(14 последних), `git reset --hard origin/main`, `docker compose up -d --build`, проверка
+`/health`. Ключ GitHub на сервере ограничен этим скриптом (`command=…,restrict` в
+`authorized_keys`). Секреты репозитория: `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS`, `DEPLOY_HOST`.
+Вручную на сервере: `/opt/video-uniq/deploy/deploy.sh`.
+
 ## Разработка
 
 ```bash

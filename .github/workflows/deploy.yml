@@ -1,0 +1,66 @@
+name: test-and-deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: uniq
+          POSTGRES_PASSWORD: uniq
+          POSTGRES_DB: uniq_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U uniq" --health-interval 5s --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://uniq:uniq@localhost:5432/uniq_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: System tools (ffmpeg, fpcalc)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg libchromaprint-tools
+      - name: Install
+        run: pip install -r requirements.txt -e ".[dev]"
+      - name: Lint
+        run: ruff check . && ruff format --check app tests
+      - name: Types
+        run: mypy app
+      - name: Tests
+        run: pytest -q
+
+  deploy:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    environment: production
+    steps:
+      - name: Deploy over SSH
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          if [ -z "$SSH_KEY" ] || [ -z "$KNOWN_HOSTS" ] || [ -z "$HOST" ]; then
+            echo "::warning::DEPLOY_SSH_KEY / DEPLOY_KNOWN_HOSTS / DEPLOY_HOST are not set, skipping deploy"
+            exit 0
+          fi
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          # The key is pinned to deploy/deploy.sh on the server; no command is passed.
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes -o BatchMode=yes "root@$HOST"
