@@ -23,6 +23,7 @@ from app.db.repositories.jobs import JobRepository
 from app.db.repositories.users import UserRepository
 from app.handlers.admin import router as admin_router
 from app.handlers.billing import router as billing_router
+from app.handlers.card import router as card_router
 from app.handlers.menu import router as menu_router
 from app.handlers.start import router as start_router
 from app.handlers.upload import router as upload_router
@@ -34,6 +35,7 @@ from app.services.intake import (
     IntakeService,
     TelegramFileFetcher,
 )
+from app.services.video_card import CardDeps, VideoCardService
 from app.services.video_rules import VideoRules
 
 logger = structlog.get_logger()
@@ -56,7 +58,12 @@ async def _on_startup(bot: Bot, dispatcher: Dispatcher) -> None:
     await run_migrations(pool)
     redis = await create_pool(RedisSettings.from_dsn(settings.redis_url))
     users, billing = UserRepository(pool), BillingRepository(pool)
+    jobs = JobRepository(pool)
     dispatcher["admin"] = AdminRepository(pool)
+    dispatcher["cards"] = VideoCardService(
+        CardDeps(jobs=jobs, billing=billing, users=users, queue=ArqJobQueue(redis)),
+        max_active_jobs=settings.max_active_jobs,
+    )
     dispatcher["billing"] = billing
     accounts = AccountService(users, billing, settings.free_credits)
     dispatcher[_REDIS_KEY] = redis
@@ -64,13 +71,7 @@ async def _on_startup(bot: Bot, dispatcher: Dispatcher) -> None:
     dispatcher["accounts"] = accounts
     dispatcher["payments"] = PaymentFlow(billing)
     dispatcher["intake"] = IntakeService(
-        IntakeDeps(
-            accounts=accounts,
-            jobs=JobRepository(pool),
-            reservations=billing,
-            fetcher=TelegramFileFetcher(bot),
-            queue=ArqJobQueue(redis),
-        ),
+        IntakeDeps(accounts=accounts, jobs=jobs, fetcher=TelegramFileFetcher(bot)),
         IntakeConfig(
             work_dir=Path(settings.work_dir),
             max_file_mb=settings.max_file_mb,
@@ -110,6 +111,7 @@ def build_app() -> web.Application:
     dp.include_router(menu_router)
     dp.include_router(billing_router)
     dp.include_router(upload_router)
+    dp.include_router(card_router)
     dp.startup.register(_on_startup)
     dp.shutdown.register(_on_shutdown)
 

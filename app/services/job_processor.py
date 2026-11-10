@@ -7,6 +7,7 @@ A rejected or failed attempt is re-rendered with seed index ``copy_index + 1000 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -24,7 +25,14 @@ from app.services.fingerprints import (
     evaluate_copy,
 )
 from app.services.probe import probe_source
-from app.services.render_plan import RenderPlan, SourceInfo, derive_seed, generate_plan
+from app.services.render_plan import (
+    AudioMode,
+    RenderPlan,
+    SourceInfo,
+    apply_audio_mode,
+    derive_seed,
+    generate_plan,
+)
 from app.services.uniqualizer import render_copy
 
 logger = structlog.get_logger()
@@ -62,6 +70,10 @@ class JobResult:
     status: JobStatus
     output_keys: list[str]
     failed_indexes: list[int]
+    resumed: int = 0  # copies accepted (and delivered) by an earlier attempt of this job
+
+
+OnCopy = Callable[[str], Awaitable[None]]
 
 
 @dataclass(slots=True)
@@ -83,7 +95,8 @@ class JobProcessor:
         self._config = config
         self._render_slots = asyncio.Semaphore(max(config.render_slots, 1))
 
-    async def process(self, job_id: int) -> JobResult:
+    async def process(self, job_id: int, on_copy: OnCopy | None = None) -> JobResult:
+        """``on_copy(key)`` is awaited as soon as each copy is accepted (progressive delivery)."""
         job = await self._jobs.get(job_id)
         if job is None:
             raise JobNotFoundError(job_id)
@@ -97,7 +110,7 @@ class JobProcessor:
 
         done = await self._copies.done_indexes(job_id)
         pending = [i for i in range(job.copies) if i not in done]
-        keys = await asyncio.gather(*(self._make_copy(ctx, i) for i in pending))
+        keys = await asyncio.gather(*(self._make_and_report(ctx, i, on_copy) for i in pending))
         made = dict(zip(pending, keys, strict=True))
         outputs = [
             self._output_key(job_id, i) for i in range(job.copies) if i in done or made.get(i)
@@ -107,13 +120,14 @@ class JobProcessor:
         status = _final_status(len(outputs), len(failed))
         await self._jobs.set_status(job_id, status)
         logger.info("job_finished", job_id=job_id, status=status, ok=len(outputs))
-        return JobResult(job_id, status, outputs, failed)
+        return JobResult(job_id, status, outputs, failed, resumed=len(done))
 
     async def _prepare(self, job: Job) -> _JobContext:
         source_path = self._config.work_dir / job.source_key
         source = await probe_source(source_path, self._config.ffprobe_bin)
+        changes_sound = job.audio_mode is AudioMode.SHIFT
         original = await compute_fingerprint(
-            source_path, source.duration, source.has_audio, self._config.tools
+            source_path, source.duration, source.has_audio and changes_sound, self._config.tools
         )
         history = await self._copies.recent_fingerprints(
             job.source_sha256, self._config.history_limit
@@ -122,10 +136,20 @@ class JobProcessor:
         out_dir.mkdir(parents=True, exist_ok=True)
         return _JobContext(job, source_path, source, original, history, out_dir)
 
+    async def _make_and_report(
+        self, ctx: _JobContext, index: int, on_copy: OnCopy | None
+    ) -> str | None:
+        key = await self._make_copy(ctx, index)
+        if key is not None and on_copy is not None:
+            await on_copy(key)
+        return key
+
     async def _make_copy(self, ctx: _JobContext, index: int) -> str | None:
         for attempt in range(self._config.max_attempts):
             seed = derive_seed(self._config.secret, ctx.job.id, index + _ATTEMPT_STRIDE * attempt)
-            plan = generate_plan(seed, index, ctx.source, ctx.job.mode)
+            plan = apply_audio_mode(
+                generate_plan(seed, index, ctx.source, ctx.job.mode), ctx.job.audio_mode
+            )
             tmp = ctx.out_dir / f"{index}.attempt{attempt}.mp4"
             fingerprint = await self._render(ctx, plan, tmp)
             if fingerprint is not None:
@@ -149,7 +173,7 @@ class JobProcessor:
                     plan, ctx.source_path, dst, tools.ffmpeg_bin, self._config.ffmpeg_threads
                 )
             duration = (ctx.source.duration - plan.time.start_offset) / plan.time.speed
-            return await compute_fingerprint(dst, duration, ctx.source.has_audio, tools)
+            return await compute_fingerprint(dst, duration, plan.audio is not None, tools)
         except (RenderError, ProbeError):
             logger.exception("attempt_error", job_id=ctx.job.id, copy_index=plan.copy_index)
             return None

@@ -245,3 +245,49 @@ async def test_purchased_credits_expire_trial_only_do_not(pool: asyncpg.Pool) ->
     assert await pool.fetchval("SELECT balance FROM users WHERE id = $1", trial_only.id) == _FREE
     assert await billing.expire_credits(ttl_days=30) == 0
     await _ledger_matches_balances(pool)
+
+
+# --- video card confirmation -----------------------------------------------------------
+
+
+async def test_card_start_reserves_once_and_only_at_shown_price(pool: asyncpg.Pool) -> None:
+    billing, jobs = BillingRepository(pool), JobRepository(pool)
+    user = await _funded_user(pool, 60, credits=20)  # 25 with the free credits
+    draft = await jobs.create_draft(_job(user, 5, Mode.HD))
+
+    stale = await jobs.update_draft(draft.id, user.id, (Mode.HD_PLUS, 5, draft.audio_mode))
+    assert stale is not None
+    assert await billing.confirm_draft(draft, 10) is None, "card changed after it was shown"
+
+    first, second = await asyncio.gather(
+        billing.confirm_draft(stale, 15), billing.confirm_draft(stale, 15)
+    )
+    started = [j for j in (first, second) if j is not None]
+    assert len(started) == 1 and started[0].status is JobStatus.QUEUED
+    assert started[0].credits_reserved == 15
+    assert await pool.fetchval("SELECT balance FROM users WHERE id = $1", user.id) == 10
+    await _ledger_matches_balances(pool)
+
+
+async def test_card_start_without_credits_keeps_the_draft(pool: asyncpg.Pool) -> None:
+    billing, jobs = BillingRepository(pool), JobRepository(pool)
+    user = (await _accounts(pool).ensure(61, None)).user  # 5 credits
+    draft = await jobs.create_draft(_job(user, 10, Mode.HD))
+    with pytest.raises(InsufficientBalanceError):
+        await billing.confirm_draft(draft, 20)
+    assert (await jobs.get(draft.id)).status is JobStatus.DRAFT  # type: ignore[union-attr]
+    assert await pool.fetchval("SELECT count(*) FROM transactions WHERE kind = 'reserve'") == 0
+
+
+async def test_new_video_replaces_old_card_and_drafts_expire(pool: asyncpg.Pool) -> None:
+    jobs = JobRepository(pool)
+    user = (await _accounts(pool).ensure(62, None)).user
+    old = await jobs.create_draft(_job(user))
+    new = await jobs.create_draft(_job(user))
+    assert (await jobs.get(old.id)).status is JobStatus.CANCELLED  # type: ignore[union-attr]
+    await pool.execute(
+        "UPDATE jobs SET created_at = now() - interval '2 hours' WHERE id = $1", new.id
+    )
+    assert await jobs.expire_drafts(60) == 1
+    assert (await jobs.get(new.id)).status is JobStatus.EXPIRED  # type: ignore[union-attr]
+    assert await jobs.count_active(user.id) == 0, "drafts never block the active-job limit"

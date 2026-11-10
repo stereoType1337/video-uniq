@@ -13,7 +13,8 @@ from app.db.repositories.jobs import Job, JobStatus
 from app.services import job_processor as jp
 from app.services.fingerprints import Fingerprint, QualityThresholds, file_sha256, phash_distance
 from app.services.job_processor import JobProcessor, ProcessorConfig
-from app.services.render_plan import Mode
+from app.services.probe import probe_source
+from app.services.render_plan import AudioMode, Mode
 
 pytestmark = pytest.mark.skipif(
     not all(shutil.which(b) for b in ("ffmpeg", "ffprobe", "fpcalc")),
@@ -154,3 +155,27 @@ async def test_parallel_copies_respect_slots_and_stay_unique(
     prints = [c.fingerprint.phash for c in store.saved]
     pairs = [phash_distance(a, b) for k, a in enumerate(prints) for b in prints[k + 1 :]]
     assert min(pairs) >= _THRESHOLDS.min_phash_to_copies, "gate saw every accepted copy"
+
+
+async def test_copies_are_reported_as_they_are_accepted(tmp_path: Path) -> None:
+    processor, _, store = _processor(tmp_path, copies=3)
+    reported: list[tuple[str, int]] = []
+
+    async def on_copy(key: str) -> None:
+        reported.append((key, len(store.saved)))
+
+    result = await processor.process(7, on_copy=on_copy)
+    assert sorted(k for k, _ in reported) == result.output_keys
+    assert all(saved >= 1 for _, saved in reported), "reported only after being saved"
+
+
+@pytest.mark.parametrize("audio_mode", [AudioMode.MUTE, AudioMode.KEEP])
+async def test_sound_choice_is_honoured_and_not_gated(
+    tmp_path: Path, audio_mode: AudioMode
+) -> None:
+    processor, jobs, _ = _processor(tmp_path, copies=2)
+    jobs.job = replace(jobs.job, audio_mode=audio_mode)
+    result = await processor.process(7)
+    assert result.status is JobStatus.DONE, "keeping the sound must not fail the audio check"
+    out = await probe_source(tmp_path / result.output_keys[0])
+    assert (out.sample_rate is None) is (audio_mode is AudioMode.MUTE)

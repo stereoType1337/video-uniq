@@ -89,6 +89,34 @@ class BillingRepository(BaseRepository):
             await apply_entry(conn, entry)
             return created
 
+    async def confirm_draft(self, draft: Job, cost: int) -> Job | None:
+        """Start a video card: reserve ``cost`` and queue it, atomically.
+
+        Matches the exact mode/copies the user saw, so a concurrent card change cannot run
+        at the old price. None if the card is gone (already started, cancelled, expired);
+        InsufficientBalanceError leaves it a draft.
+        """
+        async with self._pool.acquire() as conn, conn.transaction():
+            row = await conn.fetchrow(
+                """
+                UPDATE jobs SET status = 'queued', credits_reserved = $5
+                WHERE id = $1 AND user_id = $2 AND status = 'draft'
+                  AND mode = $3 AND copies = $4
+                RETURNING *
+                """,
+                draft.id,
+                draft.user_id,
+                draft.mode.value,
+                draft.copies,
+                cost,
+            )
+            if row is None:
+                return None
+            await apply_entry(
+                conn, LedgerEntry(draft.user_id, -cost, EntryKind.RESERVE, job_id=draft.id)
+            )
+            return to_job(row)
+
     async def settle_job(self, job_id: int, delivered: int) -> Settlement | None:
         """Charge only delivered copies, refund the rest. None if already settled."""
         async with self._pool.acquire() as conn, conn.transaction():

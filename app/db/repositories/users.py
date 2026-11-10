@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import asyncpg
 
 from app.db.base import BaseRepository
-from app.services.render_plan import Mode
+from app.services.render_plan import AudioMode, Mode
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,6 +18,7 @@ class User:
     copies: int
     ref_code: str
     referred_by: int | None
+    audio_mode: AudioMode = AudioMode.SHIFT
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,12 +61,18 @@ class UserRepository(BaseRepository):
             raise RuntimeError("user upsert returned no row")
         return to_user(row), bool(row["created"])
 
-    async def update_settings(self, user_id: int, mode: Mode, copies: int) -> User:
+    async def update_settings(
+        self, user_id: int, mode: Mode, copies: int, audio_mode: AudioMode | None = None
+    ) -> User:
         row = await self.fetchrow(
-            "UPDATE users SET mode = $2, copies = $3 WHERE id = $1 RETURNING *",
+            """
+            UPDATE users SET mode = $2, copies = $3, audio_mode = COALESCE($4, audio_mode)
+            WHERE id = $1 RETURNING *
+            """,
             user_id,
             mode.value,
             copies,
+            audio_mode.value if audio_mode is not None else None,
         )
         if row is None:
             raise RuntimeError(f"user {user_id} vanished")
@@ -86,4 +93,5 @@ def to_user(row: asyncpg.Record) -> User:
         copies=row["copies"],
         ref_code=row["ref_code"],
         referred_by=row["referred_by"],
+        audio_mode=AudioMode(row["audio_mode"]),
     )

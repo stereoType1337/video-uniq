@@ -67,3 +67,17 @@ async def test_falls_back_to_new_message_when_edit_fails(tmp_path: Path) -> None
     bot = FakeBot(fail_edit=True)
     await _notifier(bot, tmp_path).processing(_job())
     assert bot.calls == [("message", texts.processing(3))]
+
+
+async def test_delivery_sends_each_copy_with_progress(tmp_path: Path) -> None:
+    bot = FakeBot()
+    delivery = _notifier(bot, tmp_path).delivery(_job())
+    await delivery("jobs/1/2.mp4")
+    await delivery("jobs/1/0.mp4")
+    assert delivery.sent == 2
+    assert bot.calls == [
+        ("document", "2.mp4"),
+        ("edit", texts.progress(1, 3)),
+        ("document", "0.mp4"),
+        ("edit", texts.progress(2, 3)),
+    ]

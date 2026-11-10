@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import random
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from enum import StrEnum
 from typing import Any
 
@@ -18,6 +18,12 @@ class Mode(StrEnum):
     BASE = "base"
     HD = "hd"
     HD_PLUS = "hd_plus"
+
+
+class AudioMode(StrEnum):
+    SHIFT = "shift"  # pitch shift + EQ + micro delay (default, strongest)
+    KEEP = "keep"  # original sound, only tempo-matched to the video speed
+    MUTE = "mute"  # no audio track
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,6 +161,16 @@ def generate_plan(seed: str, copy_index: int, source: SourceInfo, mode: Mode) ->
         audio=_audio(rng, source),
         codec=_codec(rng, time_plan.fps),
     )
+
+
+def apply_audio_mode(plan: RenderPlan, audio_mode: AudioMode) -> RenderPlan:
+    """The plan is generated the same way for every mode (so seeds stay reproducible);
+    the user's sound choice only strips audio changes afterwards."""
+    if audio_mode is AudioMode.SHIFT or plan.audio is None:
+        return plan
+    if audio_mode is AudioMode.MUTE:
+        return replace(plan, audio=None)
+    return replace(plan, audio=replace(plan.audio, pitch=1.0, eq_gain=0.0, delay_ms=0))
 
 
 def _even(value: float) -> int:

@@ -12,7 +12,7 @@ from app.core.exceptions import (
     SourceDownloadError,
     TooManyActiveJobsError,
 )
-from app.db.repositories.jobs import Job
+from app.handlers.screens import render_video_card
 from app.services.intake import IntakeRequest, IntakeService
 from app.services.video_rules import VideoRejectedError
 
@@ -26,12 +26,9 @@ async def handle_video(message: Message, intake: IntakeService) -> None:
     media = message.video or message.document
     if media is None or message.from_user is None:
         return
+    if message.video is not None:  # sent as a "video", i.e. already recompressed by Telegram
+        await message.answer(texts.COMPRESSED_HINT.strip())
     status = await message.answer(texts.DOWNLOADING)
-    hint = texts.COMPRESSED_HINT if message.video is not None else ""
-
-    async def on_queued(job: Job, position: int) -> None:
-        await status.edit_text(texts.queued(position, job.copies) + hint)
-
     request = IntakeRequest(
         tg_id=message.from_user.id,
         username=message.from_user.username,
@@ -42,7 +39,7 @@ async def handle_video(message: Message, intake: IntakeService) -> None:
         duration=message.video.duration if message.video is not None else None,
     )
     try:
-        await intake.accept(request, on_queued)
+        result = await intake.accept(request)
     except FileTooLargeError as exc:
         await status.edit_text(texts.TOO_LARGE.format(size=exc.size_mb, limit=exc.limit_mb))
     except InsufficientBalanceError as exc:
@@ -55,6 +52,9 @@ async def handle_video(message: Message, intake: IntakeService) -> None:
         await status.edit_text(texts.UNREADABLE)
     except SourceDownloadError:
         await status.edit_text(texts.DOWNLOAD_FAILED)
+    else:
+        text, keyboard = render_video_card(result.draft, result.user.balance)
+        await status.edit_text(text, reply_markup=keyboard)
 
 
 @router.message(F.document | F.photo | F.animation | F.video_note)

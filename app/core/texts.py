@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from app.services.video_rules import Rejection, RejectReason
 
 
@@ -229,3 +231,56 @@ def balance_screen(credits: int, mode: str, copies: int, cost: int, ttl_days: in
         "Цена копии: Base 1 кр., HD 2 кр., HD+ 3 кр.\n"
         f"Купленные кредиты действуют {ttl_days} дней с последней покупки."
     )
+
+
+# --- video card ------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class CardInfo:
+    mode: str
+    copies: int
+    audio: str
+    price: int
+    balance: int
+    duration: float | None
+    width: int | None
+    height: int | None
+
+
+AUDIO_TITLES = {"shift": "меняю тон", "keep": "оригинал", "mute": "без звука"}
+AUDIO_HINTS = {
+    "shift": "",
+    "keep": "\nЗвук останется как в оригинале (подогнан под скорость видео).",
+    "mute": "\nКопии будут без звука.",
+}
+CARD_EXPIRED = "Эта карточка устарела. Пришлите видео ещё раз."
+CARD_CANCELLED = "Отменено, кредиты не списывались. Пришлите другое видео, когда будете готовы."
+
+
+def card(info: CardInfo) -> str:
+    size = f" · {info.width}×{info.height}" if info.width and info.height else ""
+    duration = f" {_duration(info.duration)}" if info.duration else ""
+    return (
+        f"🎬 Видео{duration}{size}\n\n"
+        f"Режим: {MODE_TITLES[info.mode]} — {MODE_DESCRIPTIONS[info.mode]}\n"
+        f"Копий: {info.copies} · Звук: {AUDIO_TITLES[info.audio]}{AUDIO_HINTS[info.audio]}\n\n"
+        f"{info.copies} × {info.price} кр. = {info.copies * info.price} кр. · "
+        f"на балансе {info.balance} кр."
+    )
+
+
+def card_start_button(copies: int, cost: int) -> str:
+    return f"▶ Сделать {copies_word(copies)} — {cost} кр."
+
+
+def card_topup_button(missing: int) -> str:
+    return f"💳 Не хватает {missing} кр. — пополнить"
+
+
+def card_audio_button(audio: str) -> str:
+    return f"🔊 Звук: {AUDIO_TITLES[audio]} ↻"
+
+
+def progress(ready: int, total: int) -> str:
+    return f"⚙️ Готово {ready} из {total}…"

@@ -28,21 +28,26 @@ from app.core import texts
 from app.core.config import settings
 from app.db.repositories.admin import AdminRepository
 from app.db.repositories.billing import BillingRepository
-from app.db.repositories.users import User, UserRepository
+from app.db.repositories.jobs import Job, JobRepository, JobStatus, NewJob
+from app.db.repositories.users import NewUser, User, UserRepository
 from app.handlers.admin import AdminAction
 from app.handlers.admin import router as admin_router
 from app.handlers.billing import router as billing_router
+from app.handlers.card import router as card_router
 from app.handlers.menu import router as menu_router
 from app.handlers.screens import (
+    CardAction,
     SettingsAction,
     parse_setting,
     render_balance,
     render_packs,
     render_settings,
+    render_video_card,
 )
 from app.handlers.start import router as start_router
 from app.services.billing import PACKS, AccountService, PaymentFlow
-from app.services.render_plan import Mode
+from app.services.render_plan import Mode, SourceInfo
+from app.services.video_card import CardDeps, VideoCardService
 
 _USER = User(1, 42, "u", 25, Mode.HD, 5, "ref", None)
 _NOW = dt.datetime(2026, 11, 10, tzinfo=dt.UTC)
@@ -266,3 +271,108 @@ async def test_admin_summary_search_and_grant(admin_harness: Harness, pool: asyn
     assert await pool.fetchval("SELECT balance FROM users WHERE tg_id = 42") == 55
     kinds = [r["kind"] for r in await pool.fetch("SELECT kind FROM transactions ORDER BY id")]
     assert kinds == ["trial", "admin"]
+
+
+# --- video card ------------------------------------------------------------------------
+
+
+class FakeQueue:
+    def __init__(self) -> None:
+        self.enqueued: list[int] = []
+
+    async def enqueue(self, job_id: int) -> None:
+        self.enqueued.append(job_id)
+
+
+@pytest.fixture
+def card_harness(pool: asyncpg.Pool) -> tuple[Harness, FakeQueue]:
+    harness, queue = Harness(pool), FakeQueue()
+    card_router._parent_router = None
+    harness.dp.include_router(card_router)
+    users, billing, jobs = UserRepository(pool), BillingRepository(pool), JobRepository(pool)
+    harness.dp["cards"] = VideoCardService(
+        CardDeps(jobs=jobs, billing=billing, users=users, queue=queue), max_active_jobs=2
+    )
+    return harness, queue
+
+
+async def _draft(pool: asyncpg.Pool, tg_id: int = 42) -> int:
+    user = await UserRepository(pool).get_by_tg_id(tg_id)
+    assert user is not None
+    source = SourceInfo(width=720, height=1280, fps=30.0, duration=12.0, sample_rate=48000)
+    job = await JobRepository(pool).create_draft(
+        NewJob(user.id, tg_id, 7, "sha", "src/a.mp4", user.mode, user.copies, source=source)
+    )
+    return job.id
+
+
+def _press_card(job_id: int, field: str, value: str = "") -> str:
+    return CardAction(job_id=job_id, field=field, value=value).pack()
+
+
+def test_card_shows_choice_and_price() -> None:
+    text, keyboard = render_video_card(
+        Job(1, 1, 1, 7, "s", "k", Mode.HD, 5, JobStatus.DRAFT, source_duration=12.0,
+            source_width=720, source_height=1280),
+        balance=7,
+    )  # fmt: skip
+    assert "🎬 Видео 12 с · 720×1280" in text and "5 × 2 кр. = 10 кр." in text
+    assert texts.card_topup_button(3) in _buttons(keyboard), "not enough credits -> top up"
+
+
+async def test_card_change_start_and_double_start(
+    card_harness: tuple[Harness, FakeQueue], pool: asyncpg.Pool
+) -> None:
+    harness, queue = card_harness
+    await harness.text("/start")  # 5 free credits, Base x5
+    job_id = await _draft(pool)
+
+    calls = await harness.press(_press_card(job_id, "copies", "3"))
+    edit = next(c for c in calls if isinstance(c, EditMessageText))
+    assert "3 × 1 кр. = 3 кр." in edit.text
+    calls = await harness.press(_press_card(job_id, "audio", "next"))
+    assert "Звук: оригинал" in next(c for c in calls if isinstance(c, EditMessageText)).text
+
+    calls = await harness.press(_press_card(job_id, "start"))
+    queued = next(c for c in calls if isinstance(c, EditMessageText))
+    assert "Видео принято" in queued.text and queued.reply_markup is None
+    assert queue.enqueued == [job_id]
+    row = await pool.fetchrow("SELECT status, copies, audio_mode FROM jobs WHERE id = $1", job_id)
+    assert tuple(row) == ("queued", 3, "keep")
+    assert await pool.fetchval("SELECT balance FROM users WHERE tg_id = 42") == 2
+    user = await pool.fetchrow("SELECT copies, audio_mode FROM users WHERE tg_id = 42")
+    assert tuple(user) == (3, "keep"), "card choice becomes the new default"
+
+    again = await harness.press(_press_card(job_id, "start"))
+    assert any(isinstance(c, EditMessageText) and c.text == texts.CARD_EXPIRED for c in again)
+    assert queue.enqueued == [job_id], "a second tap never charges or queues twice"
+
+
+async def test_card_start_with_too_few_credits_alerts(
+    card_harness: tuple[Harness, FakeQueue], pool: asyncpg.Pool
+) -> None:
+    harness, queue = card_harness
+    await harness.text("/start")
+    job_id = await _draft(pool)
+    await harness.press(_press_card(job_id, "mode", "hd"))  # 5 x 2 = 10 > 5
+    calls = await harness.press(_press_card(job_id, "start"))
+    assert any(isinstance(c, AnswerCallbackQuery) and c.show_alert for c in calls)
+    assert queue.enqueued == []
+    assert await pool.fetchval("SELECT status FROM jobs WHERE id = $1", job_id) == "draft"
+
+
+async def test_card_cancel_and_foreign_card(
+    card_harness: tuple[Harness, FakeQueue], pool: asyncpg.Pool
+) -> None:
+    harness, _ = card_harness
+    await harness.text("/start")
+    await UserRepository(pool).register(NewUser(99, None, "other"))
+    foreign = await _draft(pool, tg_id=99)
+    calls = await harness.press(_press_card(foreign, "start"))
+    assert any(isinstance(c, EditMessageText) and c.text == texts.CARD_EXPIRED for c in calls)
+    assert await pool.fetchval("SELECT status FROM jobs WHERE id = $1", foreign) == "draft"
+
+    own = await _draft(pool)
+    calls = await harness.press(_press_card(own, "cancel"))
+    assert any(isinstance(c, EditMessageText) and c.text == texts.CARD_CANCELLED for c in calls)
+    assert await pool.fetchval("SELECT status FROM jobs WHERE id = $1", own) == "cancelled"

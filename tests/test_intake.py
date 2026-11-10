@@ -37,15 +37,12 @@ class FakeAccounts:
 
 
 class FakeJobs:
-    def __init__(self, active: int = 0, ahead: int = 0) -> None:
+    def __init__(self, active: int = 0) -> None:
         self.created: list[NewJob] = []
-        self.costs: list[int] = []
         self.active = active
-        self.ahead = ahead
 
-    async def create_job_reserving(self, job: NewJob, cost: int) -> Job:
+    async def create_draft(self, job: NewJob) -> Job:
         self.created.append(job)
-        self.costs.append(cost)
         return Job(
             id=len(self.created),
             user_id=job.user_id,
@@ -55,14 +52,12 @@ class FakeJobs:
             source_key=job.source_key,
             mode=job.mode,
             copies=job.copies,
-            status=JobStatus.QUEUED,
+            status=JobStatus.DRAFT,
+            audio_mode=job.audio_mode,
         )
 
     async def count_active(self, user_id: int) -> int:
         return self.active
-
-    async def queue_position(self, job_id: int) -> int:
-        return self.ahead
 
 
 def _make_clip(path: Path, duration: float, fmt: str = "mp4") -> Path:
@@ -99,27 +94,10 @@ class FakeFetcher:
             shutil.copyfile(self.source, dst)
 
 
-class EventLog:
-    def __init__(self) -> None:
-        self.events: list[str] = []
-
-    async def enqueue(self, job_id: int) -> None:
-        self.events.append(f"enqueue:{job_id}")
-
-    async def on_queued(self, job: Job, position: int) -> None:
-        self.events.append(f"queued:{job.id}:{position}")
-
-
 def _service(
-    tmp_path: Path, jobs: FakeJobs, log: EventLog, fetcher: FakeFetcher, balance: int = 100
+    tmp_path: Path, jobs: FakeJobs, fetcher: FakeFetcher, balance: int = 100
 ) -> IntakeService:
-    deps = IntakeDeps(
-        accounts=FakeAccounts(balance),
-        jobs=jobs,
-        reservations=jobs,
-        fetcher=fetcher,
-        queue=log,
-    )
+    deps = IntakeDeps(accounts=FakeAccounts(balance), jobs=jobs, fetcher=fetcher)
     return IntakeService(deps, IntakeConfig(tmp_path, max_file_mb=1, max_active_jobs=2))
 
 
@@ -138,57 +116,58 @@ def _request(size: int | None = 100, duration: int | None = None) -> IntakeReque
 async def test_accept_stores_source_and_enqueues_after_status(
     tmp_path: Path, clips: dict[str, Path]
 ) -> None:
-    jobs, log = FakeJobs(ahead=3), EventLog()
-    service = _service(tmp_path, jobs, log, FakeFetcher(clips["ok"]))
-    job = await service.accept(_request(), log.on_queued)
+    jobs = FakeJobs()
+    service = _service(tmp_path, jobs, FakeFetcher(clips["ok"]))
+    result = await service.accept(_request())
+    job = result.draft
 
-    assert log.events == ["queued:1:3", "enqueue:1"], "status must be shown before enqueue"
+    assert job.status is JobStatus.DRAFT, "credits are taken only when the card is started"
+    assert jobs.created[0].source is not None and jobs.created[0].source.width == 320
     stored = tmp_path / job.source_key
     assert stored.read_bytes() == clips["ok"].read_bytes()
     assert job.source_sha256 == file_sha256(stored)
     assert (job.mode, job.copies, job.chat_id, job.status_message_id) == (Mode.HD, 5, 42, 9)
-    assert jobs.costs == [10], "HD costs 2 credits per copy"
 
 
 async def test_rejects_when_balance_too_low_before_download(tmp_path: Path) -> None:
-    jobs, log = FakeJobs(), EventLog()
+    jobs = FakeJobs()
     fetcher = FakeFetcher(payload=b"must not be fetched")
-    service = _service(tmp_path, jobs, log, fetcher, balance=9)
+    service = _service(tmp_path, jobs, fetcher, balance=0)
     with pytest.raises(InsufficientBalanceError) as info:
-        await service.accept(_request(), log.on_queued)
-    assert (info.value.required, info.value.balance) == (10, 9)
+        await service.accept(_request())
+    assert (info.value.required, info.value.balance) == (1, 0), "not even one Base copy"
     assert not (tmp_path / "src").exists() and not jobs.created
 
 
 async def test_rejects_large_file_before_download(tmp_path: Path) -> None:
-    jobs, log = FakeJobs(), EventLog()
-    service = _service(tmp_path, jobs, log, FakeFetcher(payload=b""))
+    jobs = FakeJobs()
+    service = _service(tmp_path, jobs, FakeFetcher(payload=b""))
     with pytest.raises(FileTooLargeError):
-        await service.accept(_request(size=2 * _MB), log.on_queued)
-    assert not jobs.created and not log.events
+        await service.accept(_request(size=2 * _MB))
+    assert not jobs.created
 
 
 async def test_rejects_large_file_when_size_unknown(tmp_path: Path) -> None:
-    jobs, log = FakeJobs(), EventLog()
-    service = _service(tmp_path, jobs, log, FakeFetcher(payload=b"x" * (2 * _MB)))
+    jobs = FakeJobs()
+    service = _service(tmp_path, jobs, FakeFetcher(payload=b"x" * (2 * _MB)))
     with pytest.raises(FileTooLargeError):
-        await service.accept(_request(size=None), log.on_queued)
+        await service.accept(_request(size=None))
     assert not jobs.created
 
 
 async def test_limits_active_jobs(tmp_path: Path) -> None:
-    jobs, log = FakeJobs(active=2), EventLog()
-    service = _service(tmp_path, jobs, log, FakeFetcher(payload=b""))
+    jobs = FakeJobs(active=2)
+    service = _service(tmp_path, jobs, FakeFetcher(payload=b""))
     with pytest.raises(TooManyActiveJobsError):
-        await service.accept(_request(), log.on_queued)
-    assert not log.events
+        await service.accept(_request())
+    assert not jobs.created
 
 
 async def test_rejects_long_video_before_download(tmp_path: Path) -> None:
-    jobs, log = FakeJobs(), EventLog()
+    jobs = FakeJobs()
     fetcher = FakeFetcher(payload=b"must not be fetched")
     with pytest.raises(VideoRejectedError) as info:
-        await _service(tmp_path, jobs, log, fetcher).accept(_request(duration=600), log.on_queued)
+        await _service(tmp_path, jobs, fetcher).accept(_request(duration=600))
     assert info.value.rejection.reason is RejectReason.TOO_LONG
     assert not (tmp_path / "src").exists()
 
@@ -199,18 +178,18 @@ async def test_rejects_long_video_before_download(tmp_path: Path) -> None:
 async def test_rejects_after_probe_and_removes_file(
     tmp_path: Path, clips: dict[str, Path], clip: str, reason: RejectReason
 ) -> None:
-    jobs, log = FakeJobs(), EventLog()
-    service = _service(tmp_path, jobs, log, FakeFetcher(clips[clip]))
+    jobs = FakeJobs()
+    service = _service(tmp_path, jobs, FakeFetcher(clips[clip]))
     with pytest.raises(VideoRejectedError) as info:
-        await service.accept(_request(), log.on_queued)
+        await service.accept(_request())
     assert info.value.rejection.reason is reason
     assert not list((tmp_path / "src").iterdir()), "rejected source must be deleted"
-    assert not jobs.created and not log.events
+    assert not jobs.created
 
 
 async def test_unreadable_file_is_removed(tmp_path: Path) -> None:
-    jobs, log = FakeJobs(), EventLog()
-    service = _service(tmp_path, jobs, log, FakeFetcher(payload=b"not a video at all"))
+    jobs = FakeJobs()
+    service = _service(tmp_path, jobs, FakeFetcher(payload=b"not a video at all"))
     with pytest.raises(ProbeError):
-        await service.accept(_request(), log.on_queued)
+        await service.accept(_request())
     assert not list((tmp_path / "src").iterdir())

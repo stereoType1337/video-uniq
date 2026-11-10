@@ -59,8 +59,10 @@ async def uniqualize(ctx: dict[str, Any], job_id: int) -> dict[str, Any]:
         return {"job_id": job_id, "skipped": True}
 
     await notifier.processing(job)
-    result = await processor.process(job_id)
-    sent = await notifier.send_copies(job, result)
+    delivery = notifier.delivery(job)
+    result = await processor.process(job_id, on_copy=delivery)
+    # copies accepted before an arq retry were already sent by that attempt
+    sent = delivery.sent + result.resumed
     settlement = await billing.settle_job(job_id, sent)
     await notifier.finish(job, sent, settlement)
     if sent > 0:
@@ -91,6 +93,9 @@ async def refund_stale_jobs(ctx: dict[str, Any]) -> int:
     jobs: JobRepository = ctx[JOBS_KEY]
     billing: BillingRepository = ctx[BILLING_KEY]
     notifier: JobNotifier = ctx[NOTIFIER_KEY]
+    expired = await jobs.expire_drafts(settings.draft_ttl_minutes)
+    if expired:
+        logger.info("drafts_expired", count=expired)
     stale = await billing.stale_unsettled_jobs(
         settings.stale_finished_minutes, settings.stale_running_minutes
     )

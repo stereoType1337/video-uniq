@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import shutil
 import uuid
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -23,7 +22,8 @@ from app.core.exceptions import (
     TooManyActiveJobsError,
 )
 from app.db.repositories.jobs import Job, NewJob
-from app.services.billing import Account, job_cost
+from app.db.repositories.users import User
+from app.services.billing import MIN_RUN_COST, Account
 from app.services.fingerprints import file_sha256
 from app.services.probe import probe_source
 from app.services.render_plan import SourceInfo
@@ -51,11 +51,7 @@ class AccountStore(Protocol):
 
 class JobStore(Protocol):
     async def count_active(self, user_id: int) -> int: ...
-    async def queue_position(self, job_id: int) -> int: ...
-
-
-class ReservationStore(Protocol):
-    async def create_job_reserving(self, job: NewJob, cost: int) -> Job: ...
+    async def create_draft(self, job: NewJob) -> Job: ...
 
 
 class FileFetcher(Protocol):
@@ -90,12 +86,13 @@ class IntakeConfig:
 class IntakeDeps:
     accounts: AccountStore
     jobs: JobStore
-    reservations: ReservationStore
     fetcher: FileFetcher
-    queue: JobQueue
 
 
-OnQueued = Callable[[Job, int], Awaitable[None]]
+@dataclass(frozen=True, slots=True)
+class IntakeResult:
+    draft: Job  # a video card; credits are taken only when the user starts it
+    user: User
 
 
 class IntakeService:
@@ -103,14 +100,12 @@ class IntakeService:
         self._deps = deps
         self._config = config
 
-    async def accept(self, request: IntakeRequest, on_queued: OnQueued) -> Job:
-        """``on_queued`` runs before the job hits the queue, so a fast worker cannot be
-        overtaken by the "you are in the queue" message."""
+    async def accept(self, request: IntakeRequest) -> IntakeResult:
+        """Validate and store the source, then create a draft card with the user's defaults."""
         self._check_metadata(request)
         user = (await self._deps.accounts.ensure(request.tg_id, request.username)).user
-        cost = job_cost(user.mode, user.copies)
-        if user.balance < cost:  # cheap pre-check; the reservation below is authoritative
-            raise InsufficientBalanceError(user.id, cost, user.balance)
+        if user.balance < MIN_RUN_COST:
+            raise InsufficientBalanceError(user.id, MIN_RUN_COST, user.balance)
         if await self._deps.jobs.count_active(user.id) >= self._config.max_active_jobs:
             raise TooManyActiveJobsError(user.id, self._config.max_active_jobs)
 
@@ -119,29 +114,26 @@ class IntakeService:
         source_path.parent.mkdir(parents=True, exist_ok=True)
         await self._deps.fetcher.fetch(request.file_id, source_path)
         try:
-            await self._check_file(source_path)
+            source = await self._check_file(source_path)
         except (FileTooLargeError, ProbeError, VideoRejectedError):
             source_path.unlink(missing_ok=True)
             raise
 
-        new_job = NewJob(
-            user_id=user.id,
-            chat_id=request.chat_id,
-            status_message_id=request.status_message_id,
-            source_sha256=await asyncio.to_thread(file_sha256, source_path),
-            source_key=source_key,
-            mode=user.mode,
-            copies=user.copies,
+        draft = await self._deps.jobs.create_draft(
+            NewJob(
+                user_id=user.id,
+                chat_id=request.chat_id,
+                status_message_id=request.status_message_id,
+                source_sha256=await asyncio.to_thread(file_sha256, source_path),
+                source_key=source_key,
+                mode=user.mode,
+                copies=user.copies,
+                audio_mode=user.audio_mode,
+                source=source,
+            )
         )
-        try:
-            job = await self._deps.reservations.create_job_reserving(new_job, cost)
-        except InsufficientBalanceError:
-            source_path.unlink(missing_ok=True)
-            raise
-        await on_queued(job, await self._deps.jobs.queue_position(job.id))
-        await self._deps.queue.enqueue(job.id)
-        logger.info("job_queued", job_id=job.id, user_id=user.id, copies=job.copies, cost=cost)
-        return job
+        logger.info("draft_created", job_id=draft.id, user_id=user.id)
+        return IntakeResult(draft, user)
 
     def _check_metadata(self, request: IntakeRequest) -> None:
         """Cheap checks on what Telegram tells us, before downloading anything."""

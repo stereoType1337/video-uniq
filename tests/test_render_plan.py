@@ -4,9 +4,11 @@ import pytest
 
 from app.services.render_plan import (
     MODE_LIMITS,
+    AudioMode,
     Mode,
     RenderPlan,
     SourceInfo,
+    apply_audio_mode,
     derive_seed,
     generate_plan,
 )
@@ -78,3 +80,14 @@ def test_plan_serialises_to_json_dict() -> None:
     data = _plans(_LANDSCAPE, Mode.BASE, 1)[0].to_json()
     assert data["mode"] == "base"
     assert set(data["geometry"]) >= {"scale_w", "crop_w", "sar_num"}
+
+
+def test_audio_modes_only_strip_sound_changes() -> None:
+    plan = _plans(_LANDSCAPE, Mode.BASE, 1)[0]
+    assert plan.audio is not None
+    assert apply_audio_mode(plan, AudioMode.SHIFT) == plan
+    assert apply_audio_mode(plan, AudioMode.MUTE).audio is None
+    kept = apply_audio_mode(plan, AudioMode.KEEP)
+    assert kept.audio is not None
+    assert (kept.audio.pitch, kept.audio.eq_gain, kept.audio.delay_ms) == (1.0, 0.0, 0)
+    assert kept.time == plan.time and kept.geometry == plan.geometry, "video untouched"

@@ -44,6 +44,9 @@ PACKS: tuple[Pack, ...] = (
 )
 
 
+MIN_RUN_COST = min(PRICE_PER_COPY.values())  # one copy in the cheapest mode
+
+
 def job_cost(mode: Mode, copies: int) -> int:
     return PRICE_PER_COPY[mode] * copies
 
