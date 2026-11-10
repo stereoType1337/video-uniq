@@ -29,7 +29,7 @@ docker compose up -d --build --remove-orphans 2>&1 | grep -v '^time=' || true
 
 echo "== health"
 for _ in $(seq 1 30); do
-  if curl -fsS --max-time 5 "$HEALTH_URL" >/dev/null; then
+  if curl -fs --max-time 5 "$HEALTH_URL" >/dev/null; then
     docker compose ps --format 'table {{.Name}}\t{{.Status}}'
     docker image prune -f >/dev/null
     echo "deployed $(git rev-parse --short HEAD)"
