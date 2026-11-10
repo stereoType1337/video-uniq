@@ -28,7 +28,8 @@ REST API     ─┘        │                              │
 - `app/db/repositories` — весь доступ к БД, сырой SQL через asyncpg.
 
 Подробности: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Разбор конкурента и целевые
-метрики выхода: [docs/COMPETITOR_UNIQUEVID.md](docs/COMPETITOR_UNIQUEVID.md).
+метрики выхода: [docs/COMPETITOR_UNIQUEVID.md](docs/COMPETITOR_UNIQUEVID.md),
+[docs/COMPETITOR_UNIQLY.md](docs/COMPETITOR_UNIQLY.md).
 
 ## Режимы и тарифы (черновик)
 
