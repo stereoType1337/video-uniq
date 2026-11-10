@@ -26,6 +26,14 @@ def test_command_strips_metadata_and_sei() -> None:
     assert cmd[-1] == "out.mp4"
 
 
+def test_threads_are_pinned_only_when_asked() -> None:
+    default = build_command(_plan(), Path("in.mp4"), Path("out.mp4"))
+    pinned = build_command(_plan(), Path("in.mp4"), Path("out.mp4"), threads=2)
+    assert "-threads" not in default
+    i = pinned.index("-threads")
+    assert pinned[i : i + 4] == ["-threads", "2", "-filter_threads", "2"]
+
+
 def test_command_without_audio_disables_audio() -> None:
     silent = SourceInfo(width=640, height=360, fps=25.0, duration=3.0, sample_rate=None)
     cmd = build_command(_plan(source=silent), Path("in.mp4"), Path("out.mp4"))

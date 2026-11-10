@@ -33,7 +33,9 @@ MODE_LIMITS: dict[Mode, ModeLimits] = {
     Mode.HD_PLUS: ModeLimits(max_short_side=1080, intensity=1.3, visible_effects=True),
 }
 
-_PRESETS = ("veryfast", "faster", "fast", "medium")
+# Measured on 8 vCPU (2026-11-10): veryfast 13.7 HD copies/min, faster 9.1, fast 8.0,
+# medium 7.0, with no gain in pHash distance (computed on decoded frames).
+_PRESETS = ("veryfast",)
 _PROFILES = ("high", "main")
 _EQ_FREQS = (250, 500, 1000, 2000, 4000)
 _AUDIO_BITRATES_K = (96, 128, 160)

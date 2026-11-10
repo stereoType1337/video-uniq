@@ -26,11 +26,13 @@ services:
     volumes:
       - ./work:/srv/work
     deploy:
-      replicas: 2  # sized for 8 vCPU / 16 GB: 2 x 3.5 CPU, ~1 CPU left for bot/db/tg_api
+      # One worker owns the machine (8 vCPU / 16 GB): 4 parallel FFmpeg x 2 threads inside,
+      # see RENDER_SLOTS / FFMPEG_THREADS. Scale replicas only on a bigger host.
+      replicas: 1
       resources:
         limits:
-          cpus: "3.5"
-          memory: 4g
+          cpus: "7.5"
+          memory: 12g
 
   tg_api:
     # Official Bot API server in local mode: 2 GB files, read straight from disk.

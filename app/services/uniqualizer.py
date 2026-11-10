@@ -15,7 +15,10 @@ logger = structlog.get_logger()
 _SEI_NAL_TYPE = 6  # x264 writes its settings into SEI; strip them
 
 
-def build_command(plan: RenderPlan, src: Path, dst: Path, ffmpeg_bin: str = "ffmpeg") -> list[str]:
+def build_command(
+    plan: RenderPlan, src: Path, dst: Path, ffmpeg_bin: str = "ffmpeg", threads: int = 0
+) -> list[str]:
+    """``threads`` > 0 pins x264 and filter threads (several FFmpeg processes share the CPU)."""
     cmd = [
         ffmpeg_bin,
         "-hide_banner",
@@ -37,6 +40,8 @@ def build_command(plan: RenderPlan, src: Path, dst: Path, ffmpeg_bin: str = "ffm
     else:
         cmd += ["-map", "0:a:0", "-af", build_audio_filters(plan.audio, plan.time.speed)]
         cmd += ["-c:a", "aac", "-b:a", f"{plan.audio.bitrate_k}k"]
+    if threads > 0:
+        cmd += ["-threads", str(threads), "-filter_threads", str(threads)]
     cmd += _codec_args(plan)
     cmd += [
         "-map_metadata",
@@ -110,8 +115,10 @@ def _codec_args(plan: RenderPlan) -> list[str]:
     ]
 
 
-async def render_copy(plan: RenderPlan, src: Path, dst: Path, ffmpeg_bin: str = "ffmpeg") -> None:
-    cmd = build_command(plan, src, dst, ffmpeg_bin)
+async def render_copy(
+    plan: RenderPlan, src: Path, dst: Path, ffmpeg_bin: str = "ffmpeg", threads: int = 0
+) -> None:
+    cmd = build_command(plan, src, dst, ffmpeg_bin, threads)
     process = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.DEVNULL,

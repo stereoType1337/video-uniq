@@ -6,6 +6,7 @@ A rejected or failed attempt is re-rendered with seed index ``copy_index + 1000 
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -51,6 +52,8 @@ class ProcessorConfig:
     ffprobe_bin: str = "ffprobe"
     max_attempts: int = 4
     history_limit: int = 500
+    render_slots: int = 1  # concurrent FFmpeg renders per worker process, shared by all jobs
+    ffmpeg_threads: int = 0  # threads per render; 0 = FFmpeg default (all cores)
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +72,8 @@ class _JobContext:
     original: Fingerprint
     history: list[Fingerprint]
     out_dir: Path
+    # Copies render in parallel, but each verdict must see every copy accepted before it.
+    gate: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 class JobProcessor:
@@ -76,6 +81,7 @@ class JobProcessor:
         self._jobs = jobs
         self._copies = copies
         self._config = config
+        self._render_slots = asyncio.Semaphore(max(config.render_slots, 1))
 
     async def process(self, job_id: int) -> JobResult:
         job = await self._jobs.get(job_id)
@@ -90,16 +96,13 @@ class JobProcessor:
             return JobResult(job_id, JobStatus.FAILED, [], list(range(job.copies)))
 
         done = await self._copies.done_indexes(job_id)
-        outputs = [self._output_key(job_id, i) for i in sorted(done)]
-        failed: list[int] = []
-        for index in range(job.copies):
-            if index in done:
-                continue
-            key = await self._make_copy(ctx, index)
-            if key is None:
-                failed.append(index)
-            else:
-                outputs.append(key)
+        pending = [i for i in range(job.copies) if i not in done]
+        keys = await asyncio.gather(*(self._make_copy(ctx, i) for i in pending))
+        made = dict(zip(pending, keys, strict=True))
+        outputs = [
+            self._output_key(job_id, i) for i in range(job.copies) if i in done or made.get(i)
+        ]
+        failed = [i for i in pending if made[i] is None]
 
         status = _final_status(len(outputs), len(failed))
         await self._jobs.set_status(job_id, status)
@@ -124,30 +127,36 @@ class JobProcessor:
             seed = derive_seed(self._config.secret, ctx.job.id, index + _ATTEMPT_STRIDE * attempt)
             plan = generate_plan(seed, index, ctx.source, ctx.job.mode)
             tmp = ctx.out_dir / f"{index}.attempt{attempt}.mp4"
-            fingerprint = await self._render_checked(ctx, plan, tmp, attempt)
-            if fingerprint is None:
-                tmp.unlink(missing_ok=True)
-                continue
-            key = self._output_key(ctx.job.id, index)
-            tmp.replace(self._config.work_dir / key)
-            await self._copies.save_accepted(AcceptedCopy(ctx.job.id, plan, key, fingerprint))
-            ctx.history.append(fingerprint)
-            return key
+            fingerprint = await self._render(ctx, plan, tmp)
+            if fingerprint is not None:
+                async with ctx.gate:
+                    if self._accepted(ctx, plan, fingerprint, attempt):
+                        key = self._output_key(ctx.job.id, index)
+                        tmp.replace(self._config.work_dir / key)
+                        copy = AcceptedCopy(ctx.job.id, plan, key, fingerprint)
+                        await self._copies.save_accepted(copy)
+                        ctx.history.append(fingerprint)
+                        return key
+            tmp.unlink(missing_ok=True)
         logger.warning("copy_failed", job_id=ctx.job.id, copy_index=index)
         return None
 
-    async def _render_checked(
-        self, ctx: _JobContext, plan: RenderPlan, dst: Path, attempt: int
-    ) -> Fingerprint | None:
+    async def _render(self, ctx: _JobContext, plan: RenderPlan, dst: Path) -> Fingerprint | None:
+        tools = self._config.tools
         try:
-            await render_copy(plan, ctx.source_path, dst, self._config.tools.ffmpeg_bin)
+            async with self._render_slots:
+                await render_copy(
+                    plan, ctx.source_path, dst, tools.ffmpeg_bin, self._config.ffmpeg_threads
+                )
             duration = (ctx.source.duration - plan.time.start_offset) / plan.time.speed
-            fingerprint = await compute_fingerprint(
-                dst, duration, ctx.source.has_audio, self._config.tools
-            )
+            return await compute_fingerprint(dst, duration, ctx.source.has_audio, tools)
         except (RenderError, ProbeError):
             logger.exception("attempt_error", job_id=ctx.job.id, copy_index=plan.copy_index)
             return None
+
+    def _accepted(
+        self, ctx: _JobContext, plan: RenderPlan, fingerprint: Fingerprint, attempt: int
+    ) -> bool:
         verdict = evaluate_copy(fingerprint, ctx.original, ctx.history, self._config.thresholds)
         logger.info(
             "copy_verdict",
@@ -160,7 +169,7 @@ class JobProcessor:
             phash_to_copy=_round(verdict.phash_to_nearest_copy),
             audio_to_original=_round(verdict.audio_to_original),
         )
-        return fingerprint if verdict.accepted else None
+        return verdict.accepted
 
     @staticmethod
     def _output_key(job_id: int, index: int) -> str:

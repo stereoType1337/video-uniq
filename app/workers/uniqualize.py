@@ -40,6 +40,8 @@ def build_processor() -> JobProcessor:
         ffprobe_bin=settings.ffprobe_bin,
         max_attempts=settings.max_render_attempts,
         history_limit=settings.fingerprint_history,
+        render_slots=settings.render_slots,
+        ffmpeg_threads=settings.ffmpeg_threads,
     )
     return JobProcessor(JobRepository(pool), CopyRepository(pool), config)
 

@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import shutil
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from app.db.repositories.copies import AcceptedCopy
 from app.db.repositories.jobs import Job, JobStatus
-from app.services.fingerprints import Fingerprint, QualityThresholds, file_sha256
+from app.services import job_processor as jp
+from app.services.fingerprints import Fingerprint, QualityThresholds, file_sha256, phash_distance
 from app.services.job_processor import JobProcessor, ProcessorConfig
 from app.services.render_plan import Mode
 
@@ -121,3 +124,33 @@ async def test_unreadable_source_fails_job(tmp_path: Path) -> None:
     (tmp_path / "src" / "in.mp4").write_bytes(b"not a video")
     result = await processor.process(7)
     assert result.status is JobStatus.FAILED
+
+
+async def test_parallel_copies_respect_slots_and_stay_unique(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    active, peak = 0, 0
+    real_render = jp.render_copy
+
+    async def tracking_render(*args: object, **kwargs: object) -> None:
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        try:
+            await real_render(*args, **kwargs)  # type: ignore[arg-type]
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(jp, "render_copy", tracking_render)
+    processor, _, store = _processor(tmp_path, copies=5)
+    processor._config = replace(processor._config, render_slots=3, ffmpeg_threads=1)
+    processor._render_slots = asyncio.Semaphore(3)
+
+    result = await processor.process(7)
+
+    assert result.status is JobStatus.DONE and len(result.output_keys) == 5
+    assert result.output_keys == [f"jobs/7/{i}.mp4" for i in range(5)], "ordered by index"
+    assert 2 <= peak <= 3, f"renders must overlap but never exceed the slots (peak={peak})"
+    prints = [c.fingerprint.phash for c in store.saved]
+    pairs = [phash_distance(a, b) for k, a in enumerate(prints) for b in prints[k + 1 :]]
+    assert min(pairs) >= _THRESHOLDS.min_phash_to_copies, "gate saw every accepted copy"

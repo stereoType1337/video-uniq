@@ -42,8 +42,11 @@ class Settings(BaseSettings):
     min_phash_to_copies: float = 5.0
     min_audio_to_original: float = 0.10
     max_render_attempts: int = 4
-    # One job per worker process: FFmpeg already uses all CPUs it is given (arq default is 10).
-    worker_max_jobs: int = 1
+    # Benchmarked on 8 vCPU: 4 FFmpeg x 2 threads beats 1 x 8 by ~10 %; more processes thrash.
+    # One worker owns the machine; up to 2 jobs share its 4 render slots (arq default is 10 jobs).
+    worker_max_jobs: int = 2
+    render_slots: int = 4
+    ffmpeg_threads: int = 2
     job_timeout_s: int = 3600  # 10 HD copies of a 3-minute clip must fit
     fingerprint_history: int = 500
 
