@@ -318,14 +318,22 @@ def backup_caption(name: str, size: int, entries: int) -> str:
 
 
 def terms_link(url: str) -> str:
-    return f"📄 Оферта и условия использования: {url}/terms"
+    return f"📄 Пользовательское соглашение (оферта): {url}"
 
 
 def privacy_link(url: str) -> str:
-    return f"🔒 Политика конфиденциальности: {url}/privacy"
+    return f"🔒 Политика конфиденциальности: {url}"
 
 
-def paysupport(contact: str, email: str, url: str) -> str:
+def legal_block(terms_url: str, privacy_url: str) -> str:
+    return (
+        "📜 Продолжая, вы принимаете наши:\n"
+        f"1️⃣ Пользовательское соглашение: {terms_url}\n"
+        f"2️⃣ Политика конфиденциальности: {privacy_url}"
+    )
+
+
+def paysupport(contact: str, email: str, terms_url: str) -> str:
     where = " или ".join(x for x in (contact, email) if x) or "ответом на это сообщение"
     return (
         "💳 Вопросы по оплате и возвратам\n\n"
@@ -335,5 +343,5 @@ def paysupport(contact: str, email: str, url: str) -> str:
         "• Охват и распознавание повторов площадками от нас не зависят, такие случаи "
         "не являются основанием для возврата.\n\n"
         f"Напишите: {where}. Укажите дату покупки.\n"
-        f"Условия: {url}/terms"
+        f"Условия: {terms_url}"
     )

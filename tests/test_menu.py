@@ -27,6 +27,7 @@ from aiogram.types import (
 from app.core import texts
 from app.core.config import settings
 from app.db.repositories.admin import AdminRepository
+from app.db.repositories.app_settings import AppSettingsRepository
 from app.db.repositories.billing import BillingRepository
 from app.db.repositories.jobs import Job, JobRepository, JobStatus, NewJob
 from app.db.repositories.profiles import ProfileRepository
@@ -47,6 +48,7 @@ from app.handlers.screens import (
 )
 from app.handlers.start import router as start_router
 from app.services.billing import PACKS, AccountService, PaymentFlow
+from app.services.legal_links import LegalLinks, LegalUrls
 from app.services.metadata import load_profiles
 from app.services.render_plan import Mode, SourceInfo
 from app.services.video_card import CardDeps, VideoCardService
@@ -91,8 +93,10 @@ def test_balance_and_packs_screens() -> None:
     text, keyboard = render_balance(_USER, ttl_days=30)
     assert "25 кр." in text and "стоит 10 кр." in text
     assert texts.BTN_BUY in _buttons(keyboard)
-    _, packs = render_packs()
+    legal = LegalUrls("https://t/terms", "https://t/privacy", False, False)
+    packs_text, packs = render_packs(legal)
     assert _buttons(packs)[: len(PACKS)] == [texts.pack_button(p.credits, p.stars) for p in PACKS]
+    assert "Продолжая, вы принимаете" in packs_text and "https://t/privacy" in packs_text
 
 
 # --- dispatcher over a fake Telegram session -------------------------------------------
@@ -136,6 +140,7 @@ class Harness:
         self.dp["users"] = users
         self.dp["accounts"] = AccountService(users, billing, free_credits=5)
         self.dp["payments"] = PaymentFlow(billing)
+        self.dp["legal_links"] = LegalLinks(AppSettingsRepository(pool), "https://site.test")
         self._update_id = 0
         self.tg_user = TgUser(id=42, is_bot=False, first_name="T", username="t")
         self.chat = Chat(id=42, type="private")
@@ -190,7 +195,7 @@ async def test_start_shows_menu_and_grants_trial(harness: Harness) -> None:
         (texts.BTN_SETTINGS, "⚙️ Настройки"),
         (texts.BTN_HELP, "Как это работает"),
         ("/support", "Поддержка"),
-        ("/buy", texts.BUY_TITLE),
+        ("/buy", "Продолжая, вы принимаете"),
     ],
 )
 async def test_menu_buttons_route_to_screens(harness: Harness, button: str, needle: str) -> None:
@@ -224,7 +229,7 @@ async def test_balance_screen_opens_packs_in_place(harness: Harness) -> None:
     await harness.text("/start")
     calls = await harness.press("open:packs")
     edit = next(c for c in calls if isinstance(c, EditMessageText))
-    assert edit.text == texts.BUY_TITLE
+    assert edit.text.startswith(texts.BUY_TITLE) and "https://site.test/terms" in edit.text
 
 
 # --- admin -----------------------------------------------------------------------------
@@ -424,3 +429,33 @@ def test_russian_forms_on_buttons(copies: int, button: str) -> None:
 async def test_legal_commands(harness: Harness, command: str, needle: str) -> None:
     (call,) = await harness.text(command)
     assert isinstance(call, SendMessage) and needle in call.text
+
+
+async def test_start_legal_deeplink_is_not_utm(harness: Harness, pool: asyncpg.Pool) -> None:
+    (call,) = await harness.text("/start terms")
+    assert isinstance(call, SendMessage) and "https://site.test/terms" in call.text
+    assert await pool.fetchval("SELECT utm FROM users WHERE tg_id = 42") is None
+
+
+async def test_admin_sets_and_resets_legal_links(
+    admin_harness: Harness, pool: asyncpg.Pool
+) -> None:
+    await admin_harness.text("/start")
+    calls = await admin_harness.press(AdminAction(action="legal").pack())
+    screen = next(c for c in calls if isinstance(c, EditMessageText))
+    assert "Юридические ссылки" in screen.text and "по умолчанию" in screen.text
+
+    await admin_harness.press(AdminAction(action="legal_set", profile="terms").pack())
+    (bad,) = await admin_harness.text("not a link")
+    assert isinstance(bad, SendMessage) and "https://" in bad.text
+    (ok,) = await admin_harness.text("https://telegra.ph/oferta-11-11")
+    assert isinstance(ok, SendMessage) and "Сохранено" in ok.text
+
+    (terms,) = await admin_harness.text("/terms")
+    assert isinstance(terms, SendMessage) and "https://telegra.ph/oferta-11-11" in terms.text
+    (privacy,) = await admin_harness.text("/privacy")
+    assert isinstance(privacy, SendMessage) and "https://site.test/privacy" in privacy.text
+
+    await admin_harness.press(AdminAction(action="legal_reset").pack())
+    (terms,) = await admin_harness.text("/terms")
+    assert isinstance(terms, SendMessage) and "https://site.test/terms" in terms.text

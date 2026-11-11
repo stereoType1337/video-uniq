@@ -89,8 +89,11 @@ class AccountService:
         return Account(replace(user, balance=balance), created, trial_credits=self._free_credits)
 
 
+LEGAL_START_ARGS = ("terms", "privacy")  # deep links t.me/<bot>?start=terms
+
+
 def _parse_start_arg(arg: str | None) -> tuple[str | None, str | None]:
-    if not arg:
+    if not arg or arg in LEGAL_START_ARGS:
         return None, None
     if arg.startswith(_REF_PREFIX):
         return arg.removeprefix(_REF_PREFIX) or None, None

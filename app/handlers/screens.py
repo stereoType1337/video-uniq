@@ -12,6 +12,7 @@ from app.core import texts
 from app.db.repositories.jobs import Job
 from app.db.repositories.users import User
 from app.services.billing import PACKS, PRICE_PER_COPY, job_cost
+from app.services.legal_links import LegalUrls
 from app.services.render_plan import Mode
 from app.services.video_card import COPIES_OPTIONS
 
@@ -82,7 +83,7 @@ def render_balance(user: User, ttl_days: int) -> Screen:
     return text, builder.as_markup()
 
 
-def render_packs() -> Screen:
+def render_packs(legal: LegalUrls) -> Screen:
     builder = InlineKeyboardBuilder()
     for pack in PACKS:
         builder.button(
@@ -90,7 +91,10 @@ def render_packs() -> Screen:
         )
     builder.button(text="‹ Назад", callback_data=OpenScreen(name="balance"))
     builder.adjust(1)
-    return texts.BUY_TITLE, builder.as_markup()
+    return (
+        f"{texts.BUY_TITLE}\n\n{texts.legal_block(legal.terms, legal.privacy)}",
+        builder.as_markup(),
+    )
 
 
 def parse_setting(action: SettingsAction, user: User) -> tuple[Mode, int] | None:

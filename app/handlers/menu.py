@@ -19,6 +19,7 @@ from app.handlers.screens import (
     render_settings,
 )
 from app.services.billing import AccountService, job_cost
+from app.services.legal_links import LegalLinks
 
 router = Router(name="menu")
 
@@ -55,8 +56,8 @@ async def handle_balance(message: Message, accounts: AccountService) -> None:
 
 
 @router.message(Command("buy"))
-async def handle_buy(message: Message) -> None:
-    text, keyboard = render_packs()
+async def handle_buy(message: Message, legal_links: LegalLinks) -> None:
+    text, keyboard = render_packs(await legal_links.urls())
     await message.answer(text, reply_markup=keyboard)
 
 
@@ -74,20 +75,19 @@ async def handle_help(message: Message) -> None:
 
 
 @router.message(Command("terms"))
-async def handle_terms(message: Message) -> None:
-    await message.answer(texts.terms_link(settings.public_url))
+async def handle_terms(message: Message, legal_links: LegalLinks) -> None:
+    await message.answer(texts.terms_link((await legal_links.urls()).terms))
 
 
 @router.message(Command("privacy"))
-async def handle_privacy(message: Message) -> None:
-    await message.answer(texts.privacy_link(settings.public_url))
+async def handle_privacy(message: Message, legal_links: LegalLinks) -> None:
+    await message.answer(texts.privacy_link((await legal_links.urls()).privacy))
 
 
 @router.message(Command("paysupport"))
-async def handle_paysupport(message: Message) -> None:
-    await message.answer(
-        texts.paysupport(settings.support_contact, settings.contact_email, settings.public_url)
-    )
+async def handle_paysupport(message: Message, legal_links: LegalLinks) -> None:
+    terms = (await legal_links.urls()).terms
+    await message.answer(texts.paysupport(settings.support_contact, settings.contact_email, terms))
 
 
 @router.message(Command("support"))
@@ -119,13 +119,17 @@ async def handle_setting_change(
 
 @router.callback_query(OpenScreen.filter())
 async def handle_open_screen(
-    query: CallbackQuery, callback_data: OpenScreen, accounts: AccountService
+    query: CallbackQuery,
+    callback_data: OpenScreen,
+    accounts: AccountService,
+    legal_links: LegalLinks,
 ) -> None:
     user = (await accounts.ensure(query.from_user.id, query.from_user.username)).user
+    legal_screen = render_packs(await legal_links.urls())
     screens = {
         "settings": lambda: render_settings(user),
         "balance": lambda: render_balance(user, settings.credit_ttl_days),
-        "packs": render_packs,
+        "packs": lambda: legal_screen,
     }
     render = screens.get(callback_data.name)
     if render is None:

@@ -35,6 +35,7 @@ from app.db.repositories.admin import AdminRepository, PeriodCounts, Summary, Us
 from app.db.repositories.billing import BillingRepository
 from app.db.repositories.profiles import ProfileRepository, ProfileState
 from app.services.intake import QUEUE_NAME
+from app.services.legal_links import DOCS, LegalLinks, LegalUrls, is_valid_url
 
 logger = structlog.get_logger()
 
@@ -57,6 +58,10 @@ class AdminAction(CallbackData, prefix="adm"):
 
 class AdminSearch(StatesGroup):
     waiting_query = State()
+
+
+class LegalUrlInput(StatesGroup):
+    waiting_url = State()
 
 
 router = Router(name="admin")
@@ -96,9 +101,10 @@ def render_home(s: Summary) -> Screen:
     builder.button(text="📥 Юзеры CSV", callback_data=AdminAction(action="export_users"))
     builder.button(text="📥 Платежи CSV", callback_data=AdminAction(action="export_payments"))
     builder.button(text="🎭 Профили метаданных", callback_data=AdminAction(action="profiles"))
+    builder.button(text="📜 Юридические ссылки", callback_data=AdminAction(action="legal"))
     builder.button(text="🗄 Бэкап сейчас", callback_data=AdminAction(action="backup"))
     builder.button(text="🧪 Тест алерта", callback_data=AdminAction(action="alert_test"))
-    builder.adjust(1, 1, 2, 1, 2)
+    builder.adjust(1, 1, 2, 1, 1, 2)
     return text, builder.as_markup()
 
 
@@ -152,6 +158,35 @@ def render_profiles(states: list[ProfileState]) -> Screen:
     builder.button(text="◀️ В админку", callback_data=AdminAction(action="home"))
     builder.adjust(2)
     return "\n".join(lines), builder.as_markup()
+
+
+def render_legal(urls: LegalUrls) -> Screen:
+    def line(title: str, url: str, custom: bool) -> str:
+        return f"{title}: {url}" + ("" if custom else " (по умолчанию — страница сайта)")
+
+    text = "\n".join(
+        [
+            "📜 Юридические ссылки",
+            "Эти ссылки бот показывает в /terms, /privacy, /paysupport и на экране оплаты.",
+            "",
+            line("Соглашение", urls.terms, urls.terms_custom),
+            line("Политика", urls.privacy, urls.privacy_custom),
+        ]
+    )
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="✏️ Соглашение", callback_data=AdminAction(action="legal_set", profile="terms")
+    )
+    builder.button(
+        text="✏️ Политика", callback_data=AdminAction(action="legal_set", profile="privacy")
+    )
+    if urls.terms_custom or urls.privacy_custom:
+        builder.button(
+            text="🗑 Сбросить (страницы сайта)", callback_data=AdminAction(action="legal_reset")
+        )
+    builder.button(text="◀️ В админку", callback_data=AdminAction(action="home"))
+    builder.adjust(2, 1, 1)
+    return text, builder.as_markup()
 
 
 def _date(value: datetime | None) -> str:
@@ -259,6 +294,49 @@ async def handle_profile_toggle(
         return
     notice = f"{callback_data.profile}: {'включён' if enabled else 'выключен'}"
     await _redraw(query, render_profiles(await profiles.states()), notice=notice)
+
+
+@router.callback_query(AdminAction.filter(F.action == "legal"))
+async def handle_legal(query: CallbackQuery, state: FSMContext, legal_links: LegalLinks) -> None:
+    await state.clear()
+    await _redraw(query, render_legal(await legal_links.urls()))
+
+
+@router.callback_query(AdminAction.filter(F.action == "legal_set"))
+async def handle_legal_set(
+    query: CallbackQuery, callback_data: AdminAction, state: FSMContext
+) -> None:
+    if callback_data.profile not in DOCS:
+        await query.answer("Неизвестный документ", show_alert=True)
+        return
+    await state.set_state(LegalUrlInput.waiting_url)
+    await state.update_data(doc=callback_data.profile)
+    label = "соглашения" if callback_data.profile == "terms" else "политики"
+    if isinstance(query.message, Message):
+        await query.message.answer(
+            f"Пришлите ссылку для {label} (https://…, например Telegraph или Google Docs). "
+            "/admin — отмена."
+        )
+    await query.answer()
+
+
+@router.message(LegalUrlInput.waiting_url, F.text)
+async def handle_legal_url(message: Message, state: FSMContext, legal_links: LegalLinks) -> None:
+    url = (message.text or "").strip()
+    if not is_valid_url(url):
+        await message.answer("Нужна ссылка вида https://… (до 500 символов). Пришлите ещё раз.")
+        return
+    doc = (await state.get_data()).get("doc", "")
+    await legal_links.set(doc, url)
+    await state.clear()
+    text, keyboard = render_legal(await legal_links.urls())
+    await message.answer("✅ Сохранено.\n\n" + text, reply_markup=keyboard)
+
+
+@router.callback_query(AdminAction.filter(F.action == "legal_reset"))
+async def handle_legal_reset(query: CallbackQuery, legal_links: LegalLinks) -> None:
+    await legal_links.reset()
+    await _redraw(query, render_legal(await legal_links.urls()), notice="Сброшено")
 
 
 @router.callback_query(AdminAction.filter(F.action == "backup"))

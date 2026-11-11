@@ -19,6 +19,7 @@ from app.core.logging import setup_logging
 from app.db.migrate import run_migrations
 from app.db.pool import close_pool, init_pool
 from app.db.repositories.admin import AdminRepository
+from app.db.repositories.app_settings import AppSettingsRepository
 from app.db.repositories.billing import BillingRepository
 from app.db.repositories.jobs import JobRepository
 from app.db.repositories.profiles import ProfileRepository
@@ -37,6 +38,7 @@ from app.services.intake import (
     IntakeService,
     TelegramFileFetcher,
 )
+from app.services.legal_links import LegalLinks
 from app.services.metadata import load_profiles
 from app.services.video_card import CardDeps, VideoCardService
 from app.services.video_rules import VideoRules
@@ -71,6 +73,7 @@ async def _on_startup(bot: Bot, dispatcher: Dispatcher) -> None:
     users, billing = UserRepository(pool), BillingRepository(pool)
     jobs = JobRepository(pool)
     dispatcher["admin"] = AdminRepository(pool)
+    dispatcher["legal_links"] = LegalLinks(AppSettingsRepository(pool), settings.public_url)
     dispatcher["cards"] = VideoCardService(
         CardDeps(jobs=jobs, billing=billing, users=users, queue=ArqJobQueue(redis)),
         max_active_jobs=settings.max_active_jobs,
