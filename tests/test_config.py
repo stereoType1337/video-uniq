@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import socket
+from pathlib import Path
 
 import pytest
 
@@ -39,3 +40,11 @@ async def test_webhook_ip_picks_address_on_the_bot_api_network(
     assert await webhook_ip(url, api) == "172.19.0.9"
     assert await webhook_ip(url, "") is None, "cloud Bot API: let Telegram resolve DNS"
     assert await webhook_ip("http://unknown:1", api) is None
+
+
+def test_inline_env_comment_is_not_a_value(tmp_path: Path) -> None:
+    env = tmp_path / ".env"
+    env.write_text("SUPPORT_CONTACT=            # @username поддержки\nCONTACT_EMAIL=a@b.c\n")
+    cfg = Settings(bot_token="1:x", webhook_host="http://h", service_secret="s", _env_file=env)
+    assert cfg.support_contact == ""
+    assert cfg.contact_email == "a@b.c"

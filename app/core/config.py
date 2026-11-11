@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -75,6 +76,14 @@ class Settings(BaseSettings):
 
     # .env is shared with the tg_api container (TELEGRAM_API_ID/HASH are its, not ours)
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _drop_inline_comments(cls, value: object) -> object:
+        """`KEY=   # comment` in .env yields the comment as the value; treat it as empty."""
+        if isinstance(value, str) and value.lstrip().startswith("#"):
+            return ""
+        return value
 
     @property
     def webhook_path(self) -> str:
