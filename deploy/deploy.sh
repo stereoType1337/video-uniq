@@ -31,6 +31,13 @@ echo "$before -> $(git rev-parse --short HEAD)"
 step=build; echo "== build and restart"
 docker compose up -d --build --remove-orphans 2>&1 | grep -v '^time=' || true
 
+step=caddy
+if ! cmp -s caddy/video-uniq.conf /opt/caddy/conf.d/video-uniq/video-uniq.conf; then
+  echo "== caddy config changed, reloading"
+  cp caddy/video-uniq.conf /opt/caddy/conf.d/video-uniq/video-uniq.conf
+  docker exec caddy caddy reload --config /etc/caddy/Caddyfile
+fi
+
 step=health; echo "== health"
 for _ in $(seq 1 30); do
   if curl -fs --max-time 5 "$HEALTH_URL" >/dev/null; then

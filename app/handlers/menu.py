@@ -73,6 +73,23 @@ async def handle_help(message: Message) -> None:
     )
 
 
+@router.message(Command("terms"))
+async def handle_terms(message: Message) -> None:
+    await message.answer(texts.terms_link(settings.public_url))
+
+
+@router.message(Command("privacy"))
+async def handle_privacy(message: Message) -> None:
+    await message.answer(texts.privacy_link(settings.public_url))
+
+
+@router.message(Command("paysupport"))
+async def handle_paysupport(message: Message) -> None:
+    await message.answer(
+        texts.paysupport(settings.support_contact, settings.contact_email, settings.public_url)
+    )
+
+
 @router.message(Command("support"))
 async def handle_support(message: Message) -> None:
     await message.answer(texts.support(settings.support_contact))

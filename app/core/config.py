@@ -9,6 +9,16 @@ class Settings(BaseSettings):
     webhook_port: int = 8080
     required_channel: str = ""
     support_contact: str = ""  # @username or link shown by /support
+
+    # Legal pages (/terms, /privacy). Empty operator_name -> pages show a "draft" banner.
+    service_name: str = "Uniq"
+    public_url: str = "https://uniq.pulsemarket.eu"
+    bot_username: str = ""
+    operator_name: str = ""  # e.g. ИП Иванов Иван Иванович / самозанятый ...
+    operator_details: str = ""  # e.g. ИНН ..., ОГРНИП ...
+    contact_email: str = ""
+    legal_effective_date: str = "11.11.2026"
+    hosting_provider: str = "WEYRO LTD, Ахен"
     admin_ids: str = ""  # comma-separated Telegram ids with access to /admin
 
     @property
@@ -58,6 +68,7 @@ class Settings(BaseSettings):
     stale_running_minutes: int = 120
     draft_ttl_minutes: int = 60  # an unstarted video card expires after this
 
+    fingerprint_retention_days: int = 365  # privacy policy promises this; purged daily
     backup_dir: str = "/srv/backups"
     backup_keep: int = 14
     backup_to_telegram: bool = True  # the off-server copy goes to ADMIN_IDS as a document

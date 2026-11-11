@@ -66,3 +66,21 @@ async def test_active_count_and_queue_position(pool: asyncpg.Pool) -> None:
     assert await jobs.queue_position(third.id) == 1
     await jobs.set_status(first.id, JobStatus.DONE)
     assert await jobs.count_active(a.id) == 1
+
+
+async def test_fingerprints_are_purged_after_retention(pool: asyncpg.Pool) -> None:
+    user = await _user(pool, 301)
+    job = await JobRepository(pool).create(NewJob(user.id, 301, None, "s", "k", Mode.BASE, 1))
+    source = SourceInfo(width=640, height=360, fps=25.0, duration=3.0, sample_rate=None)
+    copies = CopyRepository(pool)
+    await copies.save_accepted(
+        AcceptedCopy(
+            job.id, generate_plan("p", 0, source, Mode.BASE), "k0", Fingerprint("h", (1,), None)
+        )
+    )
+    assert await copies.purge_fingerprints(365) == 0
+    await pool.execute(
+        "UPDATE jobs SET created_at = now() - interval '400 days' WHERE id = $1", job.id
+    )
+    assert await copies.purge_fingerprints(365) == 1
+    assert await copies.recent_fingerprints("s", 10) == []

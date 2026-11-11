@@ -40,6 +40,7 @@ from app.services.intake import (
 from app.services.metadata import load_profiles
 from app.services.video_card import CardDeps, VideoCardService
 from app.services.video_rules import VideoRules
+from app.web import legal
 
 logger = structlog.get_logger()
 
@@ -53,6 +54,9 @@ BOT_COMMANDS = [
     BotCommand(command="ref", description="Пригласить друга"),
     BotCommand(command="help", description="Как это работает"),
     BotCommand(command="support", description="Поддержка"),
+    BotCommand(command="paysupport", description="Вопросы по оплате и возвратам"),
+    BotCommand(command="terms", description="Оферта"),
+    BotCommand(command="privacy", description="Конфиденциальность"),
 ]
 
 
@@ -127,6 +131,7 @@ def build_app() -> web.Application:
     SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path=settings.webhook_path)
     setup_application(app, dp, bot=bot)
     app.router.add_get("/health", _health)
+    legal.setup(app)
     return app
 
 

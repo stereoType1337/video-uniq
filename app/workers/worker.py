@@ -29,6 +29,7 @@ from app.workers.uniqualize import (
     build_processor,
     cleanup_files,
     expire_credits,
+    purge_fingerprints,
     refund_stale_jobs,
     uniqualize,
 )
@@ -62,6 +63,7 @@ class WorkerSettings:
         cron(refund_stale_jobs, minute=set(range(0, 60, 10)), unique=True),
         cron(expire_credits, hour=3, minute=5, unique=True),
         cron(backup_database, hour=3, minute=30, unique=True, timeout=1800),
+        cron(purge_fingerprints, hour=4, minute=10, unique=True),  # type: ignore[arg-type]
     ]
     on_startup = _on_startup
     on_shutdown = _on_shutdown

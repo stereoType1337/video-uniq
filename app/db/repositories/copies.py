@@ -61,6 +61,18 @@ class CopyRepository(BaseRepository):
         )
         return {int(r["copy_index"]): r["output_key"] for r in rows}
 
+    async def purge_fingerprints(self, older_than_days: int) -> int:
+        """Retention from the privacy policy: drop fingerprints of old copies."""
+        result = await self.execute(
+            """
+            DELETE FROM fingerprints f USING copies c, jobs j
+            WHERE f.copy_id = c.id AND c.job_id = j.id
+              AND j.created_at < now() - make_interval(days => $1)
+            """,
+            older_than_days,
+        )
+        return int(result.split()[-1])
+
     async def recent_fingerprints(self, source_sha256: str, limit: int) -> list[Fingerprint]:
         """Fingerprints of earlier copies made from the same source file, newest first."""
         rows = await self.fetch(

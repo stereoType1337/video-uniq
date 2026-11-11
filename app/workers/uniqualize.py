@@ -87,6 +87,14 @@ async def cleanup_files(_: dict[str, Any]) -> int:
     return removed
 
 
+async def purge_fingerprints(_: dict[str, Any]) -> int:
+    purged = await CopyRepository(get_pool()).purge_fingerprints(
+        settings.fingerprint_retention_days
+    )
+    logger.info("fingerprints_purged", count=purged)
+    return purged
+
+
 async def expire_credits(ctx: dict[str, Any]) -> int:
     billing: BillingRepository = ctx[BILLING_KEY]
     expired = await billing.expire_credits(settings.credit_ttl_days)

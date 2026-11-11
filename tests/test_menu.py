@@ -411,3 +411,16 @@ async def test_admin_profiles_screen_toggles(admin_harness: Harness, pool: async
 def test_russian_forms_on_buttons(copies: int, button: str) -> None:
     assert texts.card_start_button(copies, copies) == button
     assert "файл ниже" in texts.done(1, 1, 0) and "каждая" not in texts.done(1, 1, 0)
+
+
+@pytest.mark.parametrize(
+    ("command", "needle"),
+    [
+        ("/terms", "/terms"),
+        ("/privacy", "/privacy"),
+        ("/paysupport", "14 дней"),
+    ],
+)
+async def test_legal_commands(harness: Harness, command: str, needle: str) -> None:
+    (call,) = await harness.text(command)
+    assert isinstance(call, SendMessage) and needle in call.text
