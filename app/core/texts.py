@@ -345,3 +345,28 @@ def paysupport(contact: str, email: str, terms_url: str) -> str:
         f"Напишите: {where}. Укажите дату покупки.\n"
         f"Условия: {terms_url}"
     )
+
+
+# --- RUB payments ---------------------------------------------------------------------
+
+PAYMENT_PROVIDER_DOWN = "Платёжный сервис сейчас не отвечает. Попробуйте позже или оплатите Stars."
+
+
+def pay_methods_title(credits: int) -> str:
+    return f"💳 {credits_word(credits)}. Выберите способ оплаты:"
+
+
+def pay_method_button(label: str, amount: int, unit: str) -> str:
+    return f"{label} — {amount} {unit}"
+
+
+def pay_link(credits: int, rub: int) -> str:
+    return (
+        f"Счёт на {rub} ₽ за {credits_word(credits)} создан. Нажмите кнопку, чтобы оплатить — "
+        "откроется банк или страница оплаты. Кредиты придут сообщением сразу после оплаты.\n"
+        "Ссылка действует 24 часа."
+    )
+
+
+def pay_link_button(rub: int) -> str:
+    return f"Оплатить {rub} ₽"

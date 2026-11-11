@@ -40,9 +40,12 @@ from app.services.intake import (
 )
 from app.services.legal_links import LegalLinks
 from app.services.metadata import load_profiles
+from app.services.payments.ports import PaymentProvider
+from app.services.payments.registry import build_providers
 from app.services.video_card import CardDeps, VideoCardService
 from app.services.video_rules import VideoRules
 from app.web import legal
+from app.web import payments as payments_web
 
 logger = structlog.get_logger()
 
@@ -83,7 +86,11 @@ async def _on_startup(bot: Bot, dispatcher: Dispatcher) -> None:
     dispatcher[_REDIS_KEY] = redis
     dispatcher["users"] = users
     dispatcher["accounts"] = accounts
-    dispatcher["payments"] = PaymentFlow(billing)
+    providers = build_providers(settings)
+    dispatcher["payment_providers"] = providers
+    dispatcher["payments"] = PaymentFlow(billing, providers)
+    if providers:
+        logger.info("payment_providers", enabled=list(providers))
     dispatcher["intake"] = IntakeService(
         IntakeDeps(accounts=accounts, jobs=jobs, fetcher=TelegramFileFetcher(bot)),
         IntakeConfig(
@@ -110,6 +117,9 @@ async def _on_startup(bot: Bot, dispatcher: Dispatcher) -> None:
 
 async def _on_shutdown(bot: Bot, dispatcher: Dispatcher) -> None:
     await bot.delete_webhook()
+    providers: dict[str, PaymentProvider] = dispatcher.get("payment_providers") or {}
+    for provider in providers.values():
+        await provider.aclose()
     redis: ArqRedis | None = dispatcher.get(_REDIS_KEY)
     if redis is not None:
         await redis.aclose()
@@ -135,6 +145,14 @@ def build_app() -> web.Application:
     setup_application(app, dp, bot=bot)
     app.router.add_get("/health", _health)
     legal.setup(app)
+    payments_web.setup(app)
+
+    async def _attach_payments(app: web.Application) -> None:
+        # runs after the dispatcher startup above has built the PaymentFlow
+        app[payments_web.FLOW_KEY] = dp["payments"]
+        app[payments_web.BOT_KEY] = bot
+
+    app.on_startup.append(_attach_payments)
     return app
 
 

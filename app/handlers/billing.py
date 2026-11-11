@@ -9,7 +9,13 @@ from app.core.config import settings
 from app.core.exceptions import PaymentAmountMismatchError, PaymentNotFoundError
 from app.db.repositories.billing import ProviderVerdict
 from app.db.repositories.users import UserRepository
-from app.handlers.screens import BuyPack
+from app.handlers.screens import (
+    STARS_METHOD,
+    BuyPack,
+    PayWith,
+    render_pay_link,
+    render_pay_methods,
+)
 from app.services.billing import (
     STARS_CURRENCY,
     AccountService,
@@ -17,6 +23,7 @@ from app.services.billing import (
     find_pack,
     referral_link,
 )
+from app.services.payments.ports import ProviderError
 
 router = Router(name="billing")
 
@@ -30,8 +37,52 @@ async def handle_pack(
     payments: PaymentFlow,
 ) -> None:
     pack = find_pack(callback_data.code)
-    if pack is None or query.message is None:
+    if pack is None or not isinstance(query.message, Message):
         await query.answer("Пакет больше недоступен, откройте /buy заново.", show_alert=True)
+        return
+    if payments.providers:  # RUB methods configured: let the user pick
+        text, keyboard = render_pay_methods(pack, payments.providers)
+        await query.message.edit_text(text, reply_markup=keyboard)
+        await query.answer()
+        return
+    await _send_stars_invoice(query, bot, accounts, payments, pack.code)
+
+
+@router.callback_query(PayWith.filter())
+async def handle_pay_with(
+    query: CallbackQuery,
+    callback_data: PayWith,
+    bot: Bot,
+    accounts: AccountService,
+    payments: PaymentFlow,
+) -> None:
+    pack = find_pack(callback_data.code)
+    if pack is None or not isinstance(query.message, Message):
+        await query.answer("Пакет больше недоступен, откройте /buy заново.", show_alert=True)
+        return
+    if callback_data.method == STARS_METHOD:
+        await _send_stars_invoice(query, bot, accounts, payments, pack.code)
+        return
+    if callback_data.method not in payments.providers:
+        await query.answer("Этот способ сейчас недоступен.", show_alert=True)
+        return
+    account = await accounts.ensure(query.from_user.id, query.from_user.username)
+    try:
+        url = await payments.start_external(account.user, pack, callback_data.method)
+    except ProviderError:
+        await query.answer(texts.PAYMENT_PROVIDER_DOWN, show_alert=True)
+        return
+    text, keyboard = render_pay_link(pack, url)
+    await query.message.answer(text, reply_markup=keyboard)
+    await query.answer()
+
+
+async def _send_stars_invoice(
+    query: CallbackQuery, bot: Bot, accounts: AccountService, payments: PaymentFlow, code: str
+) -> None:
+    pack = find_pack(code)
+    if pack is None or query.message is None:
+        await query.answer()
         return
     account = await accounts.ensure(query.from_user.id, query.from_user.username)
     payment = await payments.start(account.user, pack)

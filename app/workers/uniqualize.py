@@ -19,10 +19,12 @@ from app.db.repositories.copies import CopyRepository
 from app.db.repositories.jobs import JobRepository, JobStatus
 from app.db.repositories.profiles import ProfileRepository
 from app.services.backup import BackupError, make_backup
+from app.services.billing import PaymentFlow
 from app.services.cleanup import remove_expired
 from app.services.fingerprints import QualityThresholds, Tools
 from app.services.job_processor import JobProcessor, ProcessorConfig
 from app.services.notifier import JobNotifier
+from app.web.payments import notify_buyer
 
 logger = structlog.get_logger()
 
@@ -31,6 +33,7 @@ NOTIFIER_KEY = "notifier"
 JOBS_KEY = "jobs"
 BILLING_KEY = "billing"
 BOT_KEY = "bot"
+PAYMENTS_KEY = "payments"
 
 
 def build_processor() -> JobProcessor:
@@ -147,3 +150,17 @@ async def backup_database(ctx: dict[str, Any]) -> str:
             except TelegramAPIError:
                 logger.exception("backup_upload_failed", chat_id=chat_id)
     return backup.path.name
+
+
+async def reconcile_payments(ctx: dict[str, Any]) -> int:
+    """Lost provider callbacks are routine: poll stuck RUB payments, close stale invoices."""
+    flow: PaymentFlow = ctx[PAYMENTS_KEY]
+    billing: BillingRepository = ctx[BILLING_KEY]
+    settled = await flow.reconcile(min_age_s=90, limit=50)
+    for outcome in settled:
+        logger.info("payment_reconciled", payment_id=outcome.payment.id)
+        await notify_buyer(ctx[BOT_KEY], outcome)
+    closed = await billing.close_stale_pending(settings.payment_pending_ttl_hours)
+    if closed:
+        logger.info("stale_payments_closed", count=closed)
+    return len(settled)

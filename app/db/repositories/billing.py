@@ -52,6 +52,10 @@ class ProviderVerdict:
     provider_payment_id: str
     amount: int
     payload: dict[str, Any]
+    is_success: bool = True
+    is_final: bool = True  # False (provider PENDING): leave the payment untouched
+    check_amount: bool = True  # unsigned callbacks and Stars: compare with our record
+    tolerance: int = 0  # Platega may round; overpayment (provider fee) is always fine
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +63,14 @@ class PaymentOutcome:
     payment: Payment
     just_completed: bool  # notify the user only when True
     balance: int | None
+    tg_id: int | None = None  # buyer, for the notification
+
+
+@dataclass(frozen=True, slots=True)
+class PendingPayment:
+    id: int
+    provider: str
+    provider_payment_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,8 +195,8 @@ class BillingRepository(BaseRepository):
         return _to_payment(row) if row is not None else None
 
     async def apply_verdict(self, verdict: ProviderVerdict) -> PaymentOutcome:
-        """The single settlement path for payments. Idempotent: a replayed verdict for a
-        settled payment returns just_completed=False and credits nothing."""
+        """The single settlement path for every provider (webhook, Stars, reconcile).
+        Idempotent: a replay for a settled payment returns just_completed=False."""
         async with self._pool.acquire() as conn, conn.transaction():
             row = await conn.fetchrow(
                 "SELECT * FROM payments WHERE id = $1 FOR UPDATE", verdict.payment_id
@@ -192,34 +204,127 @@ class BillingRepository(BaseRepository):
             if row is None:
                 raise PaymentNotFoundError(verdict.payment_id)
             payment = _to_payment(row)
-            if payment.status is not PaymentStatus.PENDING:
+            if payment.status is not PaymentStatus.PENDING or not verdict.is_final:
                 return PaymentOutcome(payment, just_completed=False, balance=None)
-            if verdict.amount < payment.amount:
+            if verdict.check_amount and verdict.amount < payment.amount - verdict.tolerance:
                 raise PaymentAmountMismatchError(payment.id, payment.amount, verdict.amount)
-            await conn.execute(
-                """
-                UPDATE payments
-                SET status = 'success', provider_payment_id = $2,
-                    provider_payload = $3::jsonb, paid_at = now()
-                WHERE id = $1
-                """,
-                payment.id,
-                verdict.provider_payment_id,
-                json.dumps(verdict.payload),
+            if not verdict.is_success:
+                await conn.execute(
+                    "UPDATE payments SET status = 'cancelled' WHERE id = $1", payment.id
+                )
+                return PaymentOutcome(replace(payment, status=PaymentStatus.CANCELLED), False, None)
+            return await self._settle_success(conn, payment, verdict)
+
+    async def _settle_success(
+        self, conn: asyncpg.Connection, payment: Payment, verdict: ProviderVerdict
+    ) -> PaymentOutcome:
+        await conn.execute(
+            """
+            UPDATE payments
+            SET status = 'success', provider_payment_id = COALESCE(provider_payment_id, $2),
+                provider_payload = $3::jsonb, paid_at = now()
+            WHERE id = $1
+            """,
+            payment.id,
+            verdict.provider_payment_id,
+            json.dumps(verdict.payload),
+        )
+        tg_id = await conn.fetchval(
+            "UPDATE users SET last_purchase_at = now() WHERE id = $1 RETURNING tg_id",
+            payment.user_id,
+        )
+        entry = LedgerEntry(
+            payment.user_id,
+            payment.credits,
+            EntryKind.PURCHASE,
+            payment_id=payment.id,
+            provider=payment.provider,
+        )
+        balance = await apply_entry(conn, entry)
+        done = replace(payment, status=PaymentStatus.SUCCESS)
+        return PaymentOutcome(done, just_completed=True, balance=balance, tg_id=tg_id)
+
+    async def set_provider_payment_id(self, payment_id: int, provider_payment_id: str) -> None:
+        await self.execute(
+            "UPDATE payments SET provider_payment_id = $2 WHERE id = $1",
+            payment_id,
+            provider_payment_id,
+        )
+
+    async def cancel_pending(self, payment_id: int) -> None:
+        await self.execute(
+            "UPDATE payments SET status = 'cancelled' WHERE id = $1 AND status = 'pending'",
+            payment_id,
+        )
+
+    async def log_webhook(self, provider: str, payload: dict[str, Any]) -> int:
+        """Stored before verification: the audit trail for disputed callbacks."""
+        return int(
+            await self.fetchval(
+                "INSERT INTO webhook_logs (provider, payload) VALUES ($1, $2::jsonb) RETURNING id",
+                provider,
+                json.dumps(payload),
             )
-            await conn.execute(
-                "UPDATE users SET last_purchase_at = now() WHERE id = $1", payment.user_id
+        )
+
+    async def mark_webhook(self, log_id: int, payment_id: int | None) -> None:
+        await self.execute(
+            "UPDATE webhook_logs SET processed_at = now(), payment_id = $2 WHERE id = $1",
+            log_id,
+            payment_id,
+        )
+
+    async def find_payment(
+        self, provider: str, provider_payment_id: str, internal_id: int | None
+    ) -> int | None:
+        """Lookup order from the blueprint: provider id -> our id carried in the provider
+        payload -> a numeric provider id as our id. The provider must match every time."""
+        candidates: list[tuple[str, object]] = [
+            ("provider_payment_id = $2", provider_payment_id),
+        ]
+        if internal_id is not None:
+            candidates.append(("id = $2", internal_id))
+        if provider_payment_id.isdigit():
+            candidates.append(("id = $2", int(provider_payment_id)))
+        for where, value in candidates:
+            if value in ("", None):
+                continue
+            found = await self.fetchval(
+                f"SELECT id FROM payments WHERE provider = $1 AND {where}",  # noqa: S608
+                provider,
+                value,
             )
-            entry = LedgerEntry(
-                payment.user_id,
-                payment.credits,
-                EntryKind.PURCHASE,
-                payment_id=payment.id,
-                provider=payment.provider,
-            )
-            balance = await apply_entry(conn, entry)
-            done = replace(payment, status=PaymentStatus.SUCCESS)
-            return PaymentOutcome(done, just_completed=True, balance=balance)
+            if found is not None:
+                return int(found)
+        return None
+
+    async def unsettled_payments(
+        self, providers: tuple[str, ...], min_age_s: int, limit: int
+    ) -> list[PendingPayment]:
+        rows = await self.fetch(
+            """
+            SELECT id, provider, provider_payment_id FROM payments
+            WHERE status = 'pending' AND provider = ANY($1::text[])
+              AND provider_payment_id IS NOT NULL
+              AND created_at < now() - make_interval(secs => $2)
+            ORDER BY id LIMIT $3
+            """,
+            list(providers),
+            min_age_s,
+            limit,
+        )
+        return [PendingPayment(r["id"], r["provider"], r["provider_payment_id"]) for r in rows]
+
+    async def close_stale_pending(self, older_than_hours: int) -> int:
+        """Never-paid invoices: closed, not deleted (terminal rows are history)."""
+        result = await self.execute(
+            """
+            UPDATE payments SET status = 'cancelled'
+            WHERE status = 'pending' AND created_at < now() - make_interval(hours => $1)
+            """,
+            older_than_hours,
+        )
+        return int(result.split()[-1])
 
     async def grant_trial(self, user_id: int, credits: int) -> int | None:
         """Free credits once per user. Returns the new balance, or None if already granted."""

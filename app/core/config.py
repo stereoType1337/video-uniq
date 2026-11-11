@@ -69,6 +69,17 @@ class Settings(BaseSettings):
     stale_running_minutes: int = 120
     draft_ttl_minutes: int = 60  # an unstarted video card expires after this
 
+    # Payment providers in RUB: a provider is enabled only when its credentials are set.
+    kassai_shop_id: str = ""
+    kassai_api_key: str = ""
+    kassai_secret_key2: str = ""
+    kassai_cards_enabled: bool = True
+    platega_merchant_id: str = ""
+    platega_api_key: str = ""
+    platega_method_code: int = 2
+    platega_min_amount: int = 10
+    payment_pending_ttl_hours: int = 24  # unpaid RUB invoices are closed after this
+
     fingerprint_retention_days: int = 365  # privacy policy promises this; purged daily
     backup_dir: str = "/srv/backups"
     backup_keep: int = 14

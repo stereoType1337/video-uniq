@@ -4,6 +4,8 @@ inline screen is edited in place instead of spawning new messages."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from aiogram.filters.callback_data import CallbackData
 from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
@@ -11,8 +13,9 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 from app.core import texts
 from app.db.repositories.jobs import Job
 from app.db.repositories.users import User
-from app.services.billing import PACKS, PRICE_PER_COPY, job_cost
+from app.services.billing import PACKS, PRICE_PER_COPY, Pack, job_cost
 from app.services.legal_links import LegalUrls
+from app.services.payments.ports import PaymentProvider
 from app.services.render_plan import Mode
 from app.services.video_card import COPIES_OPTIONS
 
@@ -26,6 +29,14 @@ class SettingsAction(CallbackData, prefix="set"):
 
 class BuyPack(CallbackData, prefix="buy"):
     code: str
+
+
+class PayWith(CallbackData, prefix="pay"):
+    code: str
+    method: str  # "stars" or a provider name
+
+
+STARS_METHOD = "stars"
 
 
 class CardAction(CallbackData, prefix="card"):
@@ -148,3 +159,25 @@ def render_video_card(job: Job, balance: int) -> Screen:
     builder.button(text="✖ Отмена", callback_data=CardAction(job_id=job.id, field="cancel"))
     builder.adjust(len(Mode), len(COPIES_OPTIONS), 1, 1, 1)
     return texts.card(info), builder.as_markup()
+
+
+def render_pay_methods(pack: Pack, providers: Mapping[str, PaymentProvider]) -> Screen:
+    builder = InlineKeyboardBuilder()
+    for name, provider in providers.items():
+        builder.button(
+            text=texts.pay_method_button(provider.label, pack.rub, "₽"),
+            callback_data=PayWith(code=pack.code, method=name),
+        )
+    builder.button(
+        text=texts.pay_method_button("⭐ Telegram Stars", pack.stars, "⭐"),
+        callback_data=PayWith(code=pack.code, method=STARS_METHOD),
+    )
+    builder.button(text="‹ Назад", callback_data=OpenScreen(name="packs"))
+    builder.adjust(1)
+    return texts.pay_methods_title(pack.credits), builder.as_markup()
+
+
+def render_pay_link(pack: Pack, url: str) -> Screen:
+    builder = InlineKeyboardBuilder()
+    builder.button(text=texts.pay_link_button(pack.rub), url=url)
+    return texts.pay_link(pack.credits, pack.rub), builder.as_markup()
