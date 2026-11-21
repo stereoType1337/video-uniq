@@ -5,15 +5,16 @@ inline screen is edited in place instead of spawning new messages."""
 from __future__ import annotations
 
 from collections.abc import Mapping
+from urllib.parse import quote
 
 from aiogram.filters.callback_data import CallbackData
-from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardMarkup
-from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
+from aiogram.types import InlineKeyboardMarkup
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.core import texts
 from app.db.repositories.jobs import Job
 from app.db.repositories.users import User
-from app.services.billing import PACKS, PRICE_PER_COPY, Pack, job_cost
+from app.services.billing import PACKS, PRICE_PER_COPY, Pack, job_cost, referral_link
 from app.services.legal_links import LegalUrls
 from app.services.payments.ports import PaymentProvider
 from app.services.render_plan import Mode
@@ -46,18 +47,88 @@ class CardAction(CallbackData, prefix="card"):
 
 
 class OpenScreen(CallbackData, prefix="open"):
-    name: str  # "packs" | "settings" | "balance"
+    name: str  # home | settings | balance | packs | help | ref | support | paysupport
 
 
-def main_menu() -> ReplyKeyboardMarkup:
-    builder = ReplyKeyboardBuilder()
-    builder.button(text=texts.BTN_UNIQUALIZE)
-    for label in (texts.BTN_BALANCE, texts.BTN_SETTINGS, texts.BTN_INVITE, texts.BTN_HELP):
-        builder.button(text=label)
-    builder.adjust(1, 2, 2)
-    return builder.as_markup(
-        resize_keyboard=True, is_persistent=True, input_field_placeholder=texts.MENU_PLACEHOLDER
+class AdminAction(CallbackData, prefix="adm"):
+    action: str  # home | search | card | grant | ledger | export_* | profiles | profile_toggle
+    user_id: int = 0
+    amount: int = 0
+    profile: str = ""
+
+
+def _home_button(builder: InlineKeyboardBuilder) -> None:
+    builder.button(text=texts.BTN_HOME, callback_data=OpenScreen(name="home"))
+
+
+def support_url(contact: str) -> str | None:
+    """A link for the support button: '@name' / 't.me/name' / any https URL; None otherwise."""
+    contact = contact.strip()
+    if contact.startswith("https://"):
+        return contact
+    if contact.startswith("t.me/"):
+        return f"https://{contact}"
+    if contact.startswith("@") and len(contact) > 1:
+        return f"https://t.me/{contact[1:]}"
+    return None
+
+
+def render_home(user: User, *, is_admin: bool, support: str, trial_credits: int = 0) -> Screen:
+    """The single entry screen (NotSpy pattern): inline buttons only, no reply keyboard."""
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text=texts.BTN_SETTINGS, callback_data=OpenScreen(name="settings"), style="primary"
     )
+    builder.button(
+        text=texts.BTN_BALANCE, callback_data=OpenScreen(name="balance"), style="primary"
+    )
+    builder.button(text=texts.BTN_BUY, callback_data=OpenScreen(name="packs"), style="success")
+    builder.button(text=texts.BTN_INVITE, callback_data=OpenScreen(name="ref"))
+    builder.button(text=texts.BTN_HELP, callback_data=OpenScreen(name="help"))
+    url = support_url(support)
+    if url:
+        builder.button(text=texts.BTN_SUPPORT, url=url)
+    else:
+        builder.button(text=texts.BTN_SUPPORT, callback_data=OpenScreen(name="support"))
+    sizes = [2, 1, 2, 1]
+    if is_admin:
+        builder.button(text=texts.BTN_ADMIN, callback_data=AdminAction(action="home"))
+        sizes.append(1)
+    builder.adjust(*sizes)
+    cost = job_cost(user.mode, user.copies)
+    text = texts.home(user.balance, user.mode.value, user.copies, cost, trial_credits)
+    return text, builder.as_markup()
+
+
+def render_help(legal: LegalUrls, *, max_mb: int, ttl_days: int, files_ttl_hours: int) -> Screen:
+    builder = InlineKeyboardBuilder()
+    builder.button(text=texts.BTN_TERMS, url=legal.terms)
+    builder.button(text=texts.BTN_PRIVACY, url=legal.privacy)
+    builder.button(text=texts.BTN_PAYSUPPORT, callback_data=OpenScreen(name="paysupport"))
+    _home_button(builder)
+    builder.adjust(2, 1, 1)
+    text = texts.HELP.format(max_mb=max_mb, ttl=ttl_days, files_ttl=files_ttl_hours)
+    return text, builder.as_markup()
+
+
+def render_referral(bot_username: str, ref_code: str, bonus: int) -> Screen:
+    link = referral_link(bot_username, ref_code)
+    builder = InlineKeyboardBuilder()
+    share = f"https://t.me/share/url?url={quote(link, safe='')}&text={quote(texts.SHARE_TEXT)}"
+    builder.button(text=texts.BTN_SHARE, url=share, style="success")
+    _home_button(builder)
+    builder.adjust(1)
+    return texts.referral(link, bonus), builder.as_markup()
+
+
+def render_text(text: str, back: str = "home") -> Screen:
+    """A plain info screen (support, payment questions) with one way back."""
+    builder = InlineKeyboardBuilder()
+    if back == "home":
+        _home_button(builder)
+    else:
+        builder.button(text=texts.BTN_BACK, callback_data=OpenScreen(name=back))
+    return text, builder.as_markup()
 
 
 def render_settings(user: User) -> Screen:
@@ -77,7 +148,8 @@ def render_settings(user: User) -> Screen:
         callback_data=SettingsAction(field="camera", value="toggle"),
     )
     builder.button(text=texts.BTN_BALANCE, callback_data=OpenScreen(name="balance"))
-    builder.adjust(len(Mode), len(COPIES_OPTIONS), 1, 1)
+    _home_button(builder)
+    builder.adjust(len(Mode), len(COPIES_OPTIONS), 1, 2)
     text = texts.settings_screen(
         user.mode.value, user.copies, PRICE_PER_COPY[user.mode], user.balance
     ) + texts.camera_hint(user.camera_profiles)
@@ -86,9 +158,10 @@ def render_settings(user: User) -> Screen:
 
 def render_balance(user: User, ttl_days: int) -> Screen:
     builder = InlineKeyboardBuilder()
-    builder.button(text=texts.BTN_BUY, callback_data=OpenScreen(name="packs"))
+    builder.button(text=texts.BTN_BUY, callback_data=OpenScreen(name="packs"), style="success")
     builder.button(text=texts.BTN_SETTINGS, callback_data=OpenScreen(name="settings"))
-    builder.adjust(2)
+    _home_button(builder)
+    builder.adjust(2, 1)
     cost = job_cost(user.mode, user.copies)
     text = texts.balance_screen(user.balance, user.mode.value, user.copies, cost, ttl_days)
     return text, builder.as_markup()
@@ -100,8 +173,9 @@ def render_packs(legal: LegalUrls) -> Screen:
         builder.button(
             text=texts.pack_button(pack.credits, pack.stars), callback_data=BuyPack(code=pack.code)
         )
-    builder.button(text="‹ Назад", callback_data=OpenScreen(name="balance"))
-    builder.adjust(1)
+    builder.button(text=texts.BTN_BACK, callback_data=OpenScreen(name="balance"))
+    _home_button(builder)
+    builder.adjust(*([1] * len(PACKS)), 2)
     return (
         f"{texts.BUY_TITLE}\n\n{texts.legal_block(legal.terms, legal.privacy)}",
         builder.as_markup(),
@@ -172,12 +246,12 @@ def render_pay_methods(pack: Pack, providers: Mapping[str, PaymentProvider]) -> 
         text=texts.pay_method_button("⭐ Telegram Stars", pack.stars, "⭐"),
         callback_data=PayWith(code=pack.code, method=STARS_METHOD),
     )
-    builder.button(text="‹ Назад", callback_data=OpenScreen(name="packs"))
+    builder.button(text=texts.BTN_BACK, callback_data=OpenScreen(name="packs"))
     builder.adjust(1)
     return texts.pay_methods_title(pack.credits), builder.as_markup()
 
 
 def render_pay_link(pack: Pack, url: str) -> Screen:
     builder = InlineKeyboardBuilder()
-    builder.button(text=texts.pay_link_button(pack.rub), url=url)
+    builder.button(text=texts.pay_link_button(pack.rub), url=url, style="success")
     return texts.pay_link(pack.credits, pack.rub), builder.as_markup()

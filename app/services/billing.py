@@ -211,11 +211,11 @@ class PaymentFlow:
         """Returns an error text for the user, or None when the payment may proceed."""
         payment = await self._payment_from_payload(payload)
         if payment is None or user is None or payment.user_id != user.id:
-            return "Счёт не найден. Откройте /buy и выберите пакет заново."
+            return "Счёт не найден. Откройте 💳 Пополнить и выберите пакет заново."
         if payment.status is not PaymentStatus.PENDING:
             return "Этот счёт уже оплачен или закрыт."
         if currency != STARS_CURRENCY or amount != payment.amount:
-            return "Сумма счёта изменилась. Откройте /buy и выберите пакет заново."
+            return "Сумма счёта изменилась. Откройте 💳 Пополнить и выберите пакет заново."
         return None
 
     async def complete(self, verdict: ProviderVerdict) -> PaymentOutcome:

@@ -15,7 +15,6 @@ import structlog
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import BaseFilter, Command
-from aiogram.filters.callback_data import CallbackData
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
@@ -34,6 +33,7 @@ from app.core.exceptions import InsufficientBalanceError
 from app.db.repositories.admin import AdminRepository, PeriodCounts, Summary, UserCard
 from app.db.repositories.billing import BillingRepository
 from app.db.repositories.profiles import ProfileRepository, ProfileState
+from app.handlers.screens import AdminAction, OpenScreen
 from app.services.intake import QUEUE_NAME
 from app.services.legal_links import DOCS, LegalLinks, LegalUrls, is_valid_url
 
@@ -47,13 +47,6 @@ class IsAdmin(BaseFilter):
     async def __call__(self, event: TelegramObject) -> bool:
         user = getattr(event, "from_user", None)
         return user is not None and user.id in settings.admin_id_set
-
-
-class AdminAction(CallbackData, prefix="adm"):
-    action: str  # home | search | card | grant | ledger | export_* | profiles | profile_toggle
-    user_id: int = 0
-    amount: int = 0
-    profile: str = ""
 
 
 class AdminSearch(StatesGroup):
@@ -104,7 +97,8 @@ def render_home(s: Summary) -> Screen:
     builder.button(text="📜 Юридические ссылки", callback_data=AdminAction(action="legal"))
     builder.button(text="🗄 Бэкап сейчас", callback_data=AdminAction(action="backup"))
     builder.button(text="🧪 Тест алерта", callback_data=AdminAction(action="alert_test"))
-    builder.adjust(1, 1, 2, 1, 1, 2)
+    builder.button(text=texts.BTN_HOME, callback_data=OpenScreen(name="home"))
+    builder.adjust(1, 1, 2, 1, 1, 2, 1)
     return text, builder.as_markup()
 
 

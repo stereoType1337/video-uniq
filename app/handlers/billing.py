@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 from aiogram import Bot, F, Router
-from aiogram.filters import Command
 from aiogram.types import CallbackQuery, LabeledPrice, Message, PreCheckoutQuery
 
 from app.core import texts
-from app.core.config import settings
 from app.core.exceptions import PaymentAmountMismatchError, PaymentNotFoundError
 from app.db.repositories.billing import ProviderVerdict
 from app.db.repositories.users import UserRepository
@@ -21,7 +19,6 @@ from app.services.billing import (
     AccountService,
     PaymentFlow,
     find_pack,
-    referral_link,
 )
 from app.services.payments.ports import ProviderError
 
@@ -38,7 +35,7 @@ async def handle_pack(
 ) -> None:
     pack = find_pack(callback_data.code)
     if pack is None or not isinstance(query.message, Message):
-        await query.answer("Пакет больше недоступен, откройте /buy заново.", show_alert=True)
+        await query.answer(texts.PACK_GONE, show_alert=True)
         return
     if payments.providers:  # RUB methods configured: let the user pick
         text, keyboard = render_pay_methods(pack, payments.providers)
@@ -58,7 +55,7 @@ async def handle_pay_with(
 ) -> None:
     pack = find_pack(callback_data.code)
     if pack is None or not isinstance(query.message, Message):
-        await query.answer("Пакет больше недоступен, откройте /buy заново.", show_alert=True)
+        await query.answer(texts.PACK_GONE, show_alert=True)
         return
     if callback_data.method == STARS_METHOD:
         await _send_stars_invoice(query, bot, accounts, payments, pack.code)
@@ -123,18 +120,7 @@ async def handle_successful_payment(message: Message, payments: PaymentFlow) -> 
         outcome = await payments.complete(verdict)
     except (PaymentNotFoundError, PaymentAmountMismatchError):
         # Telegram already took the Stars: keep the charge id in logs for a manual refund.
-        await message.answer("Оплата получена, но не сошлась со счётом. Напишите в /support.")
+        await message.answer(texts.PAYMENT_MISMATCH)
         raise
     if outcome.just_completed and outcome.balance is not None:
         await message.answer(texts.purchase_done(outcome.payment.credits, outcome.balance))
-
-
-@router.message(Command("ref"))
-@router.message(F.text == texts.BTN_INVITE)
-async def handle_ref(message: Message, bot: Bot, accounts: AccountService) -> None:
-    if message.from_user is None:
-        return
-    account = await accounts.ensure(message.from_user.id, message.from_user.username)
-    me = await bot.me()
-    link = referral_link(me.username or "", account.user.ref_code)
-    await message.answer(texts.referral(link, settings.referral_bonus))

@@ -27,6 +27,7 @@ from app.db.repositories.users import UserRepository
 from app.handlers.admin import router as admin_router
 from app.handlers.billing import router as billing_router
 from app.handlers.card import router as card_router
+from app.handlers.menu import fallback_router
 from app.handlers.menu import router as menu_router
 from app.handlers.start import router as start_router
 from app.handlers.upload import router as upload_router
@@ -51,18 +52,8 @@ logger = structlog.get_logger()
 
 _REDIS_KEY = "arq_redis"
 
-BOT_COMMANDS = [
-    BotCommand(command="start", description="Главная"),
-    BotCommand(command="settings", description="Режим и число копий"),
-    BotCommand(command="balance", description="Баланс и цены"),
-    BotCommand(command="buy", description="Пополнить баланс"),
-    BotCommand(command="ref", description="Пригласить друга"),
-    BotCommand(command="help", description="Как это работает"),
-    BotCommand(command="support", description="Поддержка"),
-    BotCommand(command="paysupport", description="Вопросы по оплате и возвратам"),
-    BotCommand(command="terms", description="Оферта"),
-    BotCommand(command="privacy", description="Конфиденциальность"),
-]
+# NotSpy pattern: only /start in the menu; everything else is an inline button.
+BOT_COMMANDS = [BotCommand(command="start", description="Главное меню")]
 
 
 async def _on_startup(bot: Bot, dispatcher: Dispatcher) -> None:
@@ -137,6 +128,7 @@ def build_app() -> web.Application:
     dp.include_router(billing_router)
     dp.include_router(upload_router)
     dp.include_router(card_router)
+    dp.include_router(fallback_router)  # last: unhandled text -> inline menu
     dp.startup.register(_on_startup)
     dp.shutdown.register(_on_shutdown)
 

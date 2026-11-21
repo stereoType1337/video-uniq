@@ -8,7 +8,7 @@ from typing import Any
 
 import asyncpg
 import pytest
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, Router
 from aiogram.client.session.base import BaseSession
 from aiogram.methods import AnswerCallbackQuery, EditMessageText, SendMessage, TelegramMethod
 from aiogram.methods.base import TelegramType
@@ -17,7 +17,7 @@ from aiogram.types import (
     Chat,
     InlineKeyboardMarkup,
     Message,
-    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
     Update,
 )
 from aiogram.types import (
@@ -36,15 +36,18 @@ from app.handlers.admin import AdminAction
 from app.handlers.admin import router as admin_router
 from app.handlers.billing import router as billing_router
 from app.handlers.card import router as card_router
+from app.handlers.menu import fallback_router
 from app.handlers.menu import router as menu_router
 from app.handlers.screens import (
     CardAction,
     SettingsAction,
     parse_setting,
     render_balance,
+    render_home,
     render_packs,
     render_settings,
     render_video_card,
+    support_url,
 )
 from app.handlers.start import router as start_router
 from app.services.billing import PACKS, AccountService, PaymentFlow
@@ -133,7 +136,7 @@ class Harness:
         self.session = FakeSession()
         self.bot = Bot("42:TEST", session=self.session)
         self.dp = Dispatcher()
-        for router in (start_router, menu_router, billing_router):
+        for router in (start_router, menu_router, billing_router, fallback_router):
             router._parent_router = None  # routers are module singletons; re-attach per test
             self.dp.include_router(router)
         users, billing = UserRepository(pool), BillingRepository(pool)
@@ -173,35 +176,75 @@ def harness(pool: asyncpg.Pool) -> Harness:
     return Harness(pool)
 
 
-async def test_start_shows_menu_and_grants_trial(harness: Harness) -> None:
-    (call,) = await harness.text("/start")
+async def test_start_shows_inline_menu_and_grants_trial(harness: Harness) -> None:
+    (call,) = await harness.text("/start")  # a new user never had the reply keyboard
     assert isinstance(call, SendMessage) and "5 кредитов" in call.text
-    assert isinstance(call.reply_markup, ReplyKeyboardMarkup)
-    labels = [b.text for row in call.reply_markup.keyboard for b in row]
-    assert labels == [
-        texts.BTN_UNIQUALIZE,
-        texts.BTN_BALANCE,
+    assert isinstance(call.reply_markup, InlineKeyboardMarkup)
+    assert _buttons(call.reply_markup) == [
         texts.BTN_SETTINGS,
+        texts.BTN_BALANCE,
+        texts.BTN_BUY,
         texts.BTN_INVITE,
         texts.BTN_HELP,
+        texts.BTN_SUPPORT,
     ]
 
 
+async def test_returning_user_loses_old_reply_keyboard(harness: Harness) -> None:
+    await harness.text("/start")
+    calls = await harness.text("/start")
+    cleanup = calls[0]
+    assert isinstance(cleanup, SendMessage)
+    assert isinstance(cleanup.reply_markup, ReplyKeyboardRemove)
+    assert type(calls[1]).__name__ == "DeleteMessage"
+    assert isinstance(calls[-1], SendMessage) and texts.BTN_SETTINGS in _buttons(
+        calls[-1].reply_markup  # type: ignore[arg-type]
+    )
+
+
+@pytest.mark.parametrize("text", ["🎬 Уникализировать", "💰 Баланс", "/settings", "привет"])
+async def test_old_buttons_and_retired_commands_open_inline_menu(
+    harness: Harness, text: str
+) -> None:
+    await harness.text("/start")
+    calls = await harness.text(text)
+    assert any(
+        isinstance(c, SendMessage) and isinstance(c.reply_markup, ReplyKeyboardRemove)
+        for c in calls
+    )
+    last = calls[-1]
+    assert isinstance(last, SendMessage) and "Уникализатор видео" in last.text
+
+
 @pytest.mark.parametrize(
-    ("button", "needle"),
+    ("screen", "needle"),
     [
-        (texts.BTN_UNIQUALIZE, "Base, 5 копий — 5 кр."),
-        (texts.BTN_BALANCE, "💰 Баланс: 5 кр."),
-        (texts.BTN_SETTINGS, "⚙️ Настройки"),
-        (texts.BTN_HELP, "Как это работает"),
-        ("/support", "Поддержка"),
-        ("/buy", "Продолжая, вы принимаете"),
+        ("settings", "⚙️ Настройки"),
+        ("balance", "💰 Баланс: 5 кр."),
+        ("help", "Как это работает"),
+        ("support", "Поддержка"),
+        ("packs", "Продолжая, вы принимаете"),
+        ("paysupport", "14 дней"),
+        ("home", "Base, 5 копий — 5 кр."),
     ],
 )
-async def test_menu_buttons_route_to_screens(harness: Harness, button: str, needle: str) -> None:
-    calls = await harness.text(button)
-    sent = [c for c in calls if isinstance(c, SendMessage)]
-    assert sent and needle in sent[-1].text
+async def test_inline_screens_edit_in_place(harness: Harness, screen: str, needle: str) -> None:
+    await harness.text("/start")
+    calls = await harness.press(f"open:{screen}")
+    edit = next(c for c in calls if isinstance(c, EditMessageText))
+    assert needle in edit.text and edit.message_id == 7
+    assert edit.reply_markup is not None and _buttons(edit.reply_markup)
+
+
+def test_home_shows_admin_button_only_to_admins_and_support_link() -> None:
+    _, user_kb = render_home(_USER, is_admin=False, support="")
+    _, admin_kb = render_home(_USER, is_admin=True, support="@help_bot")
+    assert texts.BTN_ADMIN not in _buttons(user_kb) and texts.BTN_ADMIN in _buttons(admin_kb)
+    support = next(
+        b for row in admin_kb.inline_keyboard for b in row if b.text == texts.BTN_SUPPORT
+    )
+    assert support.url == "https://t.me/help_bot"
+    assert support_url("t.me/x") == "https://t.me/x" and support_url("пишите сюда") is None
 
 
 async def test_settings_change_is_saved_and_screen_edited_in_place(
@@ -240,10 +283,16 @@ def admin_harness(pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch) -> Harnes
     monkeypatch.setattr(settings, "admin_ids", "42")
     harness = Harness(pool)
     admin_router._parent_router = None
-    harness.dp.include_router(admin_router)
+    _include_first(harness, admin_router)
     harness.dp["admin"] = AdminRepository(pool)
     harness.dp["billing"] = BillingRepository(pool)
     return harness
+
+
+def _include_first(harness: Harness, router: Router) -> None:
+    """Like main.py: the admin router (FSM text input) goes before the menu fallback."""
+    harness.dp.include_router(router)
+    harness.dp.sub_routers.insert(0, harness.dp.sub_routers.pop())
 
 
 async def test_admin_is_hidden_from_non_admins(
@@ -251,9 +300,10 @@ async def test_admin_is_hidden_from_non_admins(
 ) -> None:
     monkeypatch.setattr(settings, "admin_ids", "1")
     admin_router._parent_router = None
-    harness.dp.include_router(admin_router)
+    _include_first(harness, admin_router)
     harness.dp["admin"] = AdminRepository(pool)
-    assert await harness.text("/admin") == []
+    calls = await harness.text("/admin")  # falls through to the user menu
+    assert not any(isinstance(c, SendMessage) and "Админка" in c.text for c in calls)
 
 
 async def test_admin_summary_search_and_grant(admin_harness: Harness, pool: asyncpg.Pool) -> None:
