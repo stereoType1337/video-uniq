@@ -32,13 +32,13 @@ from app.db.repositories.billing import BillingRepository
 from app.db.repositories.jobs import Job, JobRepository, JobStatus, NewJob
 from app.db.repositories.profiles import ProfileRepository
 from app.db.repositories.users import NewUser, User, UserRepository
-from app.handlers.admin import AdminAction
 from app.handlers.admin import router as admin_router
 from app.handlers.billing import router as billing_router
 from app.handlers.card import router as card_router
 from app.handlers.menu import fallback_router
 from app.handlers.menu import router as menu_router
 from app.handlers.screens import (
+    AdminAction,
     CardAction,
     SettingsAction,
     parse_setting,
