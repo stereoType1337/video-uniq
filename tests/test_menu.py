@@ -196,7 +196,7 @@ async def test_returning_user_loses_old_reply_keyboard(harness: Harness) -> None
     cleanup = calls[0]
     assert isinstance(cleanup, SendMessage)
     assert isinstance(cleanup.reply_markup, ReplyKeyboardRemove)
-    assert type(calls[1]).__name__ == "DeleteMessage"
+    assert not any(type(c).__name__ == "DeleteMessage" for c in calls), "deleting restores it"
     assert isinstance(calls[-1], SendMessage) and texts.BTN_SETTINGS in _buttons(
         calls[-1].reply_markup  # type: ignore[arg-type]
     )

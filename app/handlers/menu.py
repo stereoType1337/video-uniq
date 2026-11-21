@@ -8,6 +8,7 @@ from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
+from redis.asyncio import Redis
 
 from app.core import texts
 from app.core.config import settings
@@ -123,11 +124,13 @@ async def _screen(
 
 
 @fallback_router.message(F.chat.type == "private", F.text)
-async def handle_unknown_text(message: Message, accounts: AccountService) -> None:
+async def handle_unknown_text(
+    message: Message, accounts: AccountService, arq_redis: Redis | None = None
+) -> None:
     """Old reply-keyboard buttons, retired commands, random text: back to the inline menu."""
     if message.from_user is None:
         return
-    await remove_reply_keyboard(message)
+    await remove_reply_keyboard(message, arq_redis)
     user = (await accounts.ensure(message.from_user.id, message.from_user.username)).user
     text, keyboard = render_home(
         user,
